@@ -6,3 +6,4 @@ yt-dlp
 g4f
 shazamio
 pydantic
+instaloader

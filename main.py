@@ -35,6 +35,9 @@ last_update = {}
 
 shazam = Shazam()
 
+# Skrinshotingizdan olingan 100% HAQIQIY RapidAPI kalit:
+RAPID_API_KEY = "26dd2049a8msh710c3fd6a3de040p15d588jsnbfd3a48b3910"
+
 MAIN_MENU = InlineKeyboardMarkup([
     [
         InlineKeyboardButton("🎬 Social Downloader", callback_data="menu_downloader"),
@@ -62,6 +65,59 @@ def get_post_download_buttons(user_id):
     ])
 
 ALL_QUALITIES = [144, 240, 360, 480, 720, 1080, 1440, 2160]
+
+def download_instagram_rapid(raw_url, user_id):
+    """RapidAPI orqali blokirovkalarsiz Instagram videolarni yuklash"""
+    clean_url = raw_url.split("?")[0].strip()
+    file_path = f"insta_{user_id}_{int(time.time())}.mp4"
+
+    # RapidAPI EaseApi Downloader:
+    try:
+        url = "https://instagram-reels-downloader-api.p.rapidapi.com/download"
+        querystring = {"url": clean_url}
+        headers = {
+            "x-rapidapi-key": RAPID_API_KEY,
+            "x-rapidapi-host": "instagram-reels-downloader-api.p.rapidapi.com"
+        }
+        res = requests.get(url, headers=headers, params=querystring, timeout=15)
+        if res.status_code == 200:
+            data = res.json()
+            video_url = None
+            if isinstance(data, dict):
+                video_url = data.get("download_url") or data.get("url") or data.get("video_url")
+                if not video_url and "data" in data:
+                    video_url = data["data"].get("video_url") or data["data"].get("download_url")
+
+            if video_url:
+                v_res = requests.get(video_url, stream=True, timeout=25)
+                with open(file_path, 'wb') as f:
+                    for chunk in v_res.iter_content(chunk_size=1024*1024):
+                        if chunk:
+                            f.write(chunk)
+                if os.path.exists(file_path) and os.path.getsize(file_path) > 10000:
+                    return file_path
+    except Exception as e:
+        print("RapidAPI Instagram Error:", e)
+
+    # Zaxira usuli (SaveFrom Engine):
+    try:
+        sf_url = f"https://worker.sf-api.com/service-fast-download/get?url={clean_url}"
+        sf_res = requests.get(sf_url, timeout=10)
+        if sf_res.status_code == 200:
+            sf_json = sf_res.json()
+            if sf_json.get("url"):
+                media_link = sf_json["url"][0]["url"]
+                v_res = requests.get(media_link, stream=True, timeout=25)
+                with open(file_path, 'wb') as f:
+                    for chunk in v_res.iter_content(chunk_size=1024*1024):
+                        if chunk:
+                            f.write(chunk)
+                if os.path.exists(file_path) and os.path.getsize(file_path) > 10000:
+                    return file_path
+    except Exception as e:
+        print("SaveFrom Error:", e)
+
+    return None
 
 def download_pinterest_media(url, user_id):
     try:
@@ -509,19 +565,14 @@ async def handle_user_messages(client, message):
         except:
             pass
 
-        file_name = f"social_{user_id}_{int(time.time())}.mp4"
+        file_path = await asyncio.to_thread(download_instagram_rapid, text, user_id)
 
-        # Instagram va TikTok blokirovkasini chetlab o'tuvchi maxsus buyruq:
-        cmd = f'yt-dlp --no-check-certificate --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" -o "{file_name}" "{text}"'
-        process = await asyncio.create_subprocess_shell(cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        await process.communicate()
-
-        if os.path.exists(file_name) and os.path.getsize(file_name) > 0:
-            media_file_cache[user_id] = file_name
+        if file_path and os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+            media_file_cache[user_id] = file_path
             status = await client.send_message(user_id, "📤 **Video yuborilmoqda...**")
             await client.send_video(
                 chat_id=user_id,
-                video=file_name,
+                video=file_path,
                 caption=f"✅ **Video yuklab olindi!**\n🤖 Bot: {BOT_SIGNATURE}",
                 reply_markup=get_post_download_buttons(user_id),
                 progress=progress_status,
@@ -555,5 +606,5 @@ async def handle_user_messages(client, message):
         pass
 
 if __name__ == "__main__":
-    print("🚀 Bot to'liq va barcha imkoniyatlar bilan qayta ishga tushdi!")
+    print("🚀 Bot rasmiy RapidAPI ulanishi bilan ishga tushdi!")
     app.run()

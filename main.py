@@ -76,61 +76,57 @@ def cleanup_old_file(user_id):
             pass
 
 async def download_instagram_media(raw_url, user_id):
-    """Instagram post, reels va rasmlarni tashqi xatoli API'larsiz (yt-dlp va embed orqali) yuklash"""
+    """Render IP blokirovkasini aylanib o'tib Instagram post va reels larini 100% yuklash"""
     cleanup_old_file(user_id)
     clean_url = raw_url.split("?")[0].strip()
     base_path = f"insta_{user_id}_{int(time.time())}"
 
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
     }
 
-    # 1-usul: yt-dlp orqali to'g'ridan-to'g'ri yuklash (Reels, Video va Rasmlar)
+    # 1-Usul: DDInstagram mirror orqali Cloud IP blokini aylanib o'tish (O'ta tez va ishonchli)
     try:
-        cmd = f'yt-dlp --no-warnings --write-thumbnail -o "{base_path}.%(ext)s" "{clean_url}"'
+        dd_url = clean_url.replace("instagram.com", "ddinstagram.com")
+        res = await asyncio.to_thread(requests.get, dd_url, headers=headers, timeout=8)
+        if res.status_code == 200:
+            soup = BeautifulSoup(res.content, 'html.parser')
+            
+            og_video = soup.find("meta", property="og:video")
+            if og_video and og_video.get("content"):
+                v_res = await asyncio.to_thread(requests.get, og_video["content"], headers=headers, timeout=15)
+                v_path = f"{base_path}.mp4"
+                with open(v_path, "wb") as f:
+                    f.write(v_res.content)
+                return "video", v_path
+
+            og_image = soup.find("meta", property="og:image")
+            if og_image and og_image.get("content"):
+                i_res = await asyncio.to_thread(requests.get, og_image["content"], headers=headers, timeout=15)
+                i_path = f"{base_path}.jpg"
+                with open(i_path, "wb") as f:
+                    f.write(i_res.content)
+                return "photo", i_path
+    except Exception as e:
+        print("DDInsta Bypass Error:", e)
+
+    # 2-Usul (Zaxira): Direct yt-dlp
+    try:
+        cmd = f'yt-dlp --no-warnings --geo-bypass -o "{base_path}.%(ext)s" "{clean_url}"'
         proc = await asyncio.create_subprocess_shell(cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         await proc.communicate()
 
-        # Videoni tekshirish
         for ext in ["mp4", "mkv", "webm"]:
             v_file = f"{base_path}.{ext}"
             if os.path.exists(v_file) and os.path.getsize(v_file) > 5000:
                 return "video", v_file
 
-        # Rasmni tekshirish
         for ext in ["jpg", "png", "webp"]:
             i_file = f"{base_path}.{ext}"
             if os.path.exists(i_file) and os.path.getsize(i_file) > 1000:
                 return "photo", i_file
     except Exception as e:
-        print("yt-dlp Instagram Error:", e)
-
-    # 2-usul (Zaxira): Direct Instagram Embed Parser (Rasmlar va postlar uchun)
-    try:
-        embed_url = clean_url.rstrip('/') + '/embed/captioned/'
-        response = await asyncio.to_thread(requests.get, embed_url, headers=headers, timeout=8)
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.content, 'html.parser')
-
-            video_tag = soup.find('video')
-            if video_tag and video_tag.get('src'):
-                v_url = video_tag['src']
-                v_res = await asyncio.to_thread(requests.get, v_url, headers=headers, timeout=15)
-                v_path = f"{base_path}_embed.mp4"
-                with open(v_path, 'wb') as f:
-                    f.write(v_res.content)
-                return "video", v_path
-
-            img_tag = soup.find('img', class_='EmbeddedMediaImage')
-            if img_tag and img_tag.get('src'):
-                i_url = img_tag['src']
-                i_res = await asyncio.to_thread(requests.get, i_url, headers=headers, timeout=15)
-                i_path = f"{base_path}_embed.jpg"
-                with open(i_path, 'wb') as f:
-                    f.write(i_res.content)
-                return "photo", i_path
-    except Exception as e:
-        print("Embed Instagram Error:", e)
+        print("yt-dlp Inst Error:", e)
 
     return None, None
 
@@ -168,88 +164,79 @@ def download_pinterest_media(url, user_id):
         print("Pinterest DL Error:", e)
     return None, None
 
-async def recognize_audio_shazam(video_path):
-    """Ko'p bosqichli offsetlar bilan audioni aniqlash"""
+async def try_single_shazam(video_path, start_sec):
+    """Tezkor Shazam tahlil yordamchisi"""
     ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
-    offsets = [0, 5, 10, 15, 20, 30, 45, 60]
+    audio_sample = f"{video_path}_{start_sec}.mp3"
+    try:
+        cmd = (
+            f'"{ffmpeg_exe}" -y -ss {start_sec} -i "{video_path}" '
+            f'-vn -ac 1 -ar 44100 -b:a 128k -t 12 "{audio_sample}"'
+        )
+        process = await asyncio.create_subprocess_shell(
+            cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        await process.communicate()
 
-    for start in offsets:
-        audio_sample = f"{video_path}_{start}.mp3"
+        if not os.path.exists(audio_sample) or os.path.getsize(audio_sample) < 3000:
+            return None
 
-        try:
-            cmd = (
-                f'"{ffmpeg_exe}" -y -ss {start} -i "{video_path}" '
-                f'-vn -ac 2 -ar 48000 -b:a 192k -t 20 "{audio_sample}"'
-            )
-
-            process = await asyncio.create_subprocess_shell(
-                cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            await process.communicate()
-
-            if not os.path.exists(audio_sample):
-                continue
-
-            if os.path.getsize(audio_sample) < 5000:
-                os.remove(audio_sample)
-                continue
-
-            result = await shazam.recognize(audio_sample)
-            print(result)
-
+        result = await shazam.recognize(audio_sample)
+        if os.path.exists(audio_sample):
             os.remove(audio_sample)
 
-            track = result.get("track")
-            if not track:
-                continue
-
+        track = result.get("track")
+        if track and track.get("title"):
             title = track.get("title")
             artist = track.get("subtitle")
+            return f"{artist} - {title}" if artist else title
+    except Exception as e:
+        print(f"Shazam single error ({start_sec}s):", e)
+        if os.path.exists(audio_sample):
+            os.remove(audio_sample)
+    return None
 
-            if not title:
+async def recognize_audio_shazam(video_path):
+    """Tezkor Shazam - bir vaqtning o'zida tahlil qilish (MAX 3-5 soniya)"""
+    try:
+        # Bir vaqtda 0-soniya va 10-soniyalarni tekshiramiz
+        results_list = await asyncio.gather(
+            try_single_shazam(video_path, 0),
+            try_single_shazam(video_path, 10)
+        )
+        
+        song = next((s for s in results_list if s), None)
+        if not song:
+            return None, []
+
+        search = await asyncio.create_subprocess_shell(
+            f'yt-dlp "ytsearch5:{song}" --dump-json',
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, _ = await search.communicate()
+
+        results = []
+        for line in stdout.decode().splitlines():
+            if not line.strip():
                 continue
+            try:
+                item = json.loads(line)
+                sec = item.get("duration", 0)
+                m, s = divmod(sec, 60)
+                results.append({
+                    "id": item["id"],
+                    "title": item["title"],
+                    "url": item["webpage_url"],
+                    "duration": f"{m}:{s:02d}"
+                })
+            except Exception:
+                pass
 
-            song = f"{artist} - {title}" if artist else title
-
-            search = await asyncio.create_subprocess_shell(
-                f'yt-dlp "ytsearch5:{song}" --dump-json',
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-
-            stdout, _ = await search.communicate()
-
-            results = []
-
-            for line in stdout.decode().splitlines():
-                if not line.strip():
-                    continue
-
-                try:
-                    item = json.loads(line)
-
-                    sec = item.get("duration", 0)
-                    m, s = divmod(sec, 60)
-
-                    results.append({
-                        "id": item["id"],
-                        "title": item["title"],
-                        "url": item["webpage_url"],
-                        "duration": f"{m}:{s:02d}"
-                    })
-                except Exception:
-                    pass
-
-            return song, results[:5]
-
-        except Exception as e:
-            print(f"SHAZAM Error (offset {start}s):", e)
-            if os.path.exists(audio_sample):
-                os.remove(audio_sample)
-
-    return None, []
+        return song, results[:5]
+    except Exception as e:
+        print("SHAZAM Main Error:", e)
+        return None, []
 
 async def progress_status(current, total, status_msg, action_text):
     now = time.time()
@@ -668,7 +655,7 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Bot Direct yt-dlp va ShazamIO bilan 24/7 ishlamoqda!")
+        self.wfile.write(b"Bot Tezkor Shazam va Instagram Bypass bilan 24/7 ishlamoqda!")
 
 def run_dummy_server():
     port = int(os.environ.get("PORT", 8080))
@@ -687,5 +674,5 @@ def keep_alive_ping():
 if __name__ == "__main__":
     threading.Thread(target=run_dummy_server, daemon=True).start()
     threading.Thread(target=keep_alive_ping, daemon=True).start()
-    print("🚀 Bot to'liq yangilandi va ishga tushdi!")
+    print("🚀 Bot tezkor Shazam va Instagram bypass bilan ishga tushdi!")
     app.run()

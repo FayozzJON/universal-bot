@@ -76,55 +76,84 @@ def cleanup_old_file(user_id):
             pass
 
 async def download_instagram_media(raw_url, user_id):
-    """Instagram post (rasm) va video/reels larini asl HD formatda yuklash"""
+    """Instagram post (/p/) va reels (/reel/) larni har qanday sharoitda HD yuklash"""
     cleanup_old_file(user_id)
     clean_url = raw_url.split("?")[0].strip()
     base_path = f"insta_{user_id}_{int(time.time())}"
 
-    # 1. yt-dlp orqali universal va sifatli yuklash
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'
+    }
+
+    # 1. Boshlang'ich usul: Cobalt API orqali blokirovkani aylanib o'tib yuklash
     try:
-        cmd = f'yt-dlp --no-warnings --write-thumbnail --no-clean-pages -o "{base_path}.%(ext)s" "{clean_url}"'
+        api_req = await asyncio.to_thread(
+            requests.post,
+            "https://co.wuk.sh/api/json",
+            json={"url": clean_url},
+            headers={"Accept": "application/json", "Content-Type": "application/json"},
+            timeout=8
+        )
+        if api_req.status_code == 200:
+            res_json = api_req.json()
+            dl_url = res_json.get("url")
+            if dl_url:
+                media_res = await asyncio.to_thread(requests.get, dl_url, headers=headers, timeout=15)
+                is_video = res_json.get("type") == "video" or ".mp4" in dl_url
+                ext = "mp4" if is_video else "jpg"
+                out_path = f"{base_path}_cobalt.{ext}"
+                with open(out_path, "wb") as f:
+                    f.write(media_res.content)
+                return ("video" if is_video else "photo"), out_path
+    except Exception as e:
+        print("Cobalt API Error:", e)
+
+    # 2. Ikkinchi usul: Direct Insta Scraping / Meta OpenGraph HD extraction
+    try:
+        embed_url = clean_url.rstrip('/') + '/embed/captioned/'
+        response = await asyncio.to_thread(requests.get, embed_url, headers=headers, timeout=8)
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.content, 'html.parser')
+            
+            # Videoni qidirish
+            video_tag = soup.find('video')
+            if video_tag and video_tag.get('src'):
+                v_url = video_tag['src']
+                v_res = await asyncio.to_thread(requests.get, v_url, headers=headers, timeout=15)
+                v_path = f"{base_path}_embed.mp4"
+                with open(v_path, 'wb') as f:
+                    f.write(v_res.content)
+                return "video", v_path
+
+            # HD Rasmni qidirish
+            img_tag = soup.find('img', class_='EmbeddedMediaImage')
+            if img_tag and img_tag.get('src'):
+                i_url = img_tag['src']
+                i_res = await asyncio.to_thread(requests.get, i_url, headers=headers, timeout=15)
+                i_path = f"{base_path}_embed.jpg"
+                with open(i_path, 'wb') as f:
+                    f.write(i_res.content)
+                return "photo", i_path
+    except Exception as e:
+        print("Embed Scraper Error:", e)
+
+    # 3. Zaxira usul: yt-dlp orqali yuklash
+    try:
+        cmd = f'yt-dlp --no-warnings --write-thumbnail -o "{base_path}.%(ext)s" "{clean_url}"'
         proc = await asyncio.create_subprocess_shell(cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         await proc.communicate()
 
-        # Video bo'lsa
         for ext in ["mp4", "mkv", "webm"]:
             v_file = f"{base_path}.{ext}"
             if os.path.exists(v_file) and os.path.getsize(v_file) > 5000:
                 return "video", v_file
 
-        # Rasm bo'lsa
         for ext in ["jpg", "png", "webp"]:
             i_file = f"{base_path}.{ext}"
             if os.path.exists(i_file) and os.path.getsize(i_file) > 1000:
                 return "photo", i_file
     except Exception as e:
         print("yt-dlp Inst DL Error:", e)
-
-    # 2. Zaxira: Ochiq API orqali HD rasmlarni va videolarni olish
-    try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        }
-        api_req = await asyncio.to_thread(
-            requests.post,
-            "https://co.wuk.sh/api/json",
-            json={"url": clean_url},
-            headers={"Accept": "application/json", "Content-Type": "application/json"},
-            timeout=10
-        )
-        if api_req.status_code == 200:
-            res_json = api_req.json()
-            dl_url = res_json.get("url")
-            if dl_url:
-                media_res = await asyncio.to_thread(requests.get, dl_url, headers=headers)
-                ext = "mp4" if res_json.get("type") == "video" else "jpg"
-                out_path = f"{base_path}_cobalt.{ext}"
-                with open(out_path, "wb") as f:
-                    f.write(media_res.content)
-                return ("video" if ext == "mp4" else "photo"), out_path
-    except Exception as e:
-        print("Cobalt API Inst Fallback Error:", e)
 
     return None, None
 
@@ -163,62 +192,56 @@ def download_pinterest_media(url, user_id):
     return None, None
 
 async def recognize_audio_shazam(video_path):
-    """FFmpeg orqali audioni 15 soniya ajratib, Shazam bilan musiqa topish"""
-    try:
-        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
-        audio_sample = f"{video_path}_sample.mp3"
-        
-        # Audio namunani aniq formatda qirqib olish
-        cmd = f'"{ffmpeg_exe}" -y -i "{video_path}" -vn -ar 44100 -ac 1 -t 15 -f mp3 "{audio_sample}"'
-        proc = await asyncio.create_subprocess_shell(cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        await proc.communicate()
+    """Siz taqdim etgan multi-offset (0s, 15s, 30s) Shazam izlash funksiyasi"""
+    ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+    offsets = [0, 15, 30]
 
-        if not os.path.exists(audio_sample) or os.path.getsize(audio_sample) < 1000:
-            return None, []
+    for start in offsets:
+        audio_sample = f"{video_path}_sample_{start}.mp3"
+        try:
+            cmd = f'"{ffmpeg_exe}" -y -ss {start} -i "{video_path}" -vn -ar 44100 -ac 1 -t 12 -f mp3 "{audio_sample}"'
+            proc = await asyncio.create_subprocess_shell(cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            await proc.communicate()
 
-        # Shazam tahlili
-        out = await shazam.recognize(audio_sample)
+            if not os.path.exists(audio_sample) or os.path.getsize(audio_sample) < 1000:
+                continue
 
-        if os.path.exists(audio_sample):
-            os.remove(audio_sample)
+            out = await shazam.recognize(audio_sample)
+            if os.path.exists(audio_sample):
+                os.remove(audio_sample)
 
-        track = out.get('track', {})
-        song_title = track.get('title')
-        artist = track.get('subtitle')
+            track = out.get('track', {})
+            song_title = track.get('title')
+            artist = track.get('subtitle')
 
-        full_song = None
-        if song_title and artist:
-            full_song = f"{artist} - {song_title}"
-        elif song_title:
-            full_song = song_title
+            if song_title:
+                full_song = f"{artist} - {song_title}" if artist else song_title
+                search_cmd = f'yt-dlp "ytsearch5:{full_song}" --dump-json'
+                sproc = await asyncio.create_subprocess_shell(search_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+                sout, _ = await sproc.communicate()
 
-        if not full_song:
-            return None, []
+                results = []
+                for line in sout.decode().split('\n'):
+                    if line.strip():
+                        try:
+                            item = json.loads(line)
+                            dur_sec = item.get('duration', 0)
+                            mins, secs = divmod(dur_sec, 60)
+                            results.append({
+                                "id": item.get('id'),
+                                "title": item.get('title'),
+                                "url": item.get('webpage_url'),
+                                "duration": f"{mins}:{secs:02d}"
+                            })
+                        except:
+                            pass
+                return full_song, results[:5]
+        except Exception as e:
+            print(f"Shazam Error (offset {start}s):", e)
+            if os.path.exists(audio_sample):
+                os.remove(audio_sample)
 
-        search_cmd = f'yt-dlp "ytsearch5:{full_song}" --dump-json'
-        sproc = await asyncio.create_subprocess_shell(search_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        sout, _ = await sproc.communicate()
-
-        results = []
-        for line in sout.decode().split('\n'):
-            if line.strip():
-                try:
-                    item = json.loads(line)
-                    dur_sec = item.get('duration', 0)
-                    mins, secs = divmod(dur_sec, 60)
-                    results.append({
-                        "id": item.get('id'),
-                        "title": item.get('title'),
-                        "url": item.get('webpage_url'),
-                        "duration": f"{mins}:{secs:02d}"
-                    })
-                except:
-                    pass
-
-        return full_song, results[:5]
-    except Exception as e:
-        print("Shazam Recognize Error:", e)
-        return None, []
+    return None, []
 
 async def progress_status(current, total, status_msg, action_text):
     now = time.time()
@@ -637,7 +660,7 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Bot Shazam va Barcha Instagram Postlari bilan 24/7 ishlamoqda!")
+        self.wfile.write(b"Bot Multi-Offset Shazam va Instagram Postlari bilan 24/7 ishlamoqda!")
 
 def run_dummy_server():
     port = int(os.environ.get("PORT", 8080))
@@ -656,5 +679,5 @@ def keep_alive_ping():
 if __name__ == "__main__":
     threading.Thread(target=run_dummy_server, daemon=True).start()
     threading.Thread(target=keep_alive_ping, daemon=True).start()
-    print("🚀 Bot Instagram Postlari va Shazam bilan muvaffaqiyatli ishga tushdi!")
+    print("🚀 Bot yangilangan Shazam va Instagram Post Scraper bilan ishga tushdi!")
     app.run()

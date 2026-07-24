@@ -4,4 +4,5 @@ requests
 beautifulsoup4
 yt-dlp
 g4f
-flask
+shazamio
+pydantic

@@ -12,6 +12,7 @@ from bs4 import BeautifulSoup
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from shazamio import Shazam
+import instaloader
 import g4f
 
 API_ID = 38154579
@@ -34,9 +35,7 @@ search_results_cache = {}
 last_update = {}
 
 shazam = Shazam()
-
-# Skrinshotingizdan olingan 100% HAQIQIY RapidAPI kalit:
-RAPID_API_KEY = "26dd2049a8msh710c3fd6a3de040p15d588jsnbfd3a48b3910"
+L = instaloader.Instaloader(download_pictures=False, download_videos=True, download_video_thumbnails=False, save_metadata=False, compress_json=False)
 
 MAIN_MENU = InlineKeyboardMarkup([
     [
@@ -66,30 +65,19 @@ def get_post_download_buttons(user_id):
 
 ALL_QUALITIES = [144, 240, 360, 480, 720, 1080, 1440, 2160]
 
-def download_instagram_rapid(raw_url, user_id):
-    """RapidAPI orqali blokirovkalarsiz Instagram videolarni yuklash"""
+def download_instagram_stable(raw_url, user_id):
+    """Instagram videolarni Instaloader va ochiq APIlar orqali yuklash"""
     clean_url = raw_url.split("?")[0].strip()
     file_path = f"insta_{user_id}_{int(time.time())}.mp4"
 
-    # RapidAPI EaseApi Downloader:
+    # 1-USUL: Instaloader
     try:
-        url = "https://instagram-reels-downloader-api.p.rapidapi.com/download"
-        querystring = {"url": clean_url}
-        headers = {
-            "x-rapidapi-key": RAPID_API_KEY,
-            "x-rapidapi-host": "instagram-reels-downloader-api.p.rapidapi.com"
-        }
-        res = requests.get(url, headers=headers, params=querystring, timeout=15)
-        if res.status_code == 200:
-            data = res.json()
-            video_url = None
-            if isinstance(data, dict):
-                video_url = data.get("download_url") or data.get("url") or data.get("video_url")
-                if not video_url and "data" in data:
-                    video_url = data["data"].get("video_url") or data["data"].get("download_url")
-
-            if video_url:
-                v_res = requests.get(video_url, stream=True, timeout=25)
+        shortcode_match = re.search(r'/(?:p|reel|reels)/([A-Za-z0-9_-]+)', clean_url)
+        if shortcode_match:
+            shortcode = shortcode_match.group(1)
+            post = instaloader.Post.from_shortcode(L.context, shortcode)
+            if post.is_video:
+                v_res = requests.get(post.video_url, stream=True, timeout=25)
                 with open(file_path, 'wb') as f:
                     for chunk in v_res.iter_content(chunk_size=1024*1024):
                         if chunk:
@@ -97,9 +85,33 @@ def download_instagram_rapid(raw_url, user_id):
                 if os.path.exists(file_path) and os.path.getsize(file_path) > 10000:
                     return file_path
     except Exception as e:
-        print("RapidAPI Instagram Error:", e)
+        print("Instaloader Error:", e)
 
-    # Zaxira usuli (SaveFrom Engine):
+    # 2-USUL: RapidAPI (General Fetch)
+    try:
+        url = "https://instagram-reels-downloader-api.p.rapidapi.com/download"
+        querystring = {"url": clean_url}
+        headers = {
+            "x-rapidapi-key": "26dd2049a8msh710c3fd6a3de040p15d588jsnbfd3a48b3910",
+            "x-rapidapi-host": "instagram-reels-downloader-api.p.rapidapi.com"
+        }
+        res = requests.get(url, headers=headers, params=querystring, timeout=15)
+        if res.status_code == 200:
+            res_text = res.text
+            urls = re.findall(r'https?://[^\s"\'<>]+', res_text)
+            for u in urls:
+                if ".mp4" in u or "cdninstagram" in u or "fbcdn" in u:
+                    v_res = requests.get(u, stream=True, timeout=25)
+                    with open(file_path, 'wb') as f:
+                        for chunk in v_res.iter_content(chunk_size=1024*1024):
+                            if chunk:
+                                f.write(chunk)
+                    if os.path.exists(file_path) and os.path.getsize(file_path) > 10000:
+                        return file_path
+    except Exception as e:
+        print("RapidAPI Direct Error:", e)
+
+    # 3-USUL: SaveFrom Service
     try:
         sf_url = f"https://worker.sf-api.com/service-fast-download/get?url={clean_url}"
         sf_res = requests.get(sf_url, timeout=10)
@@ -565,7 +577,7 @@ async def handle_user_messages(client, message):
         except:
             pass
 
-        file_path = await asyncio.to_thread(download_instagram_rapid, text, user_id)
+        file_path = await asyncio.to_thread(download_instagram_stable, text, user_id)
 
         if file_path and os.path.exists(file_path) and os.path.getsize(file_path) > 0:
             media_file_cache[user_id] = file_path
@@ -606,5 +618,5 @@ async def handle_user_messages(client, message):
         pass
 
 if __name__ == "__main__":
-    print("🚀 Bot rasmiy RapidAPI ulanishi bilan ishga tushdi!")
+    print("🚀 Bot Instaloader va yangilangan parser ulanishi bilan ishga tushdi!")
     app.run()

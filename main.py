@@ -63,70 +63,6 @@ def get_post_download_buttons(user_id):
 
 ALL_QUALITIES = [144, 240, 360, 480, 720, 1080, 1440, 2160]
 
-def download_instagram_direct(raw_url, user_id):
-    """Instagram Cloud IP-blockni chetlab o'tuvchi ko'p bosqichli API yuklagich"""
-    clean_url = raw_url.split("?")[0].strip()
-    file_path = f"insta_{user_id}_{int(time.time())}.mp4"
-
-    # 1-USUL: FastSnap/SnapInsta Web Parser
-    try:
-        req_headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            "Referer": "https://snapinsta.app/"
-        }
-        res = requests.post("https://snapinsta.app/action2.php", data={"url": clean_url}, headers=req_headers, timeout=10)
-        if res.status_code == 200:
-            soup = BeautifulSoup(res.text, 'html.parser')
-            download_a = soup.find('a', class_='abutton') or soup.find('a', text=re.compile(r'Download', re.I))
-            if download_a and download_a.get('href'):
-                v_url = download_a['href']
-                v_res = requests.get(v_url, stream=True, timeout=20)
-                with open(file_path, 'wb') as f:
-                    for chunk in v_res.iter_content(chunk_size=1024*1024):
-                        if chunk:
-                            f.write(chunk)
-                if os.path.exists(file_path) and os.path.getsize(file_path) > 10000:
-                    return file_path
-    except Exception as e:
-        print("SnapInsta Error:", e)
-
-    # 2-USUL: SaveFrom / SSInstagram API
-    try:
-        sf_url = f"https://worker.sf-api.com/service-fast-download/get?url={clean_url}"
-        sf_res = requests.get(sf_url, timeout=10)
-        if sf_res.status_code == 200:
-            sf_json = sf_res.json()
-            if sf_json.get("url"):
-                media_link = sf_json["url"][0]["url"]
-                v_res = requests.get(media_link, stream=True, timeout=20)
-                with open(file_path, 'wb') as f:
-                    for chunk in v_res.iter_content(chunk_size=1024*1024):
-                        if chunk:
-                            f.write(chunk)
-                if os.path.exists(file_path) and os.path.getsize(file_path) > 10000:
-                    return file_path
-    except Exception as e:
-        print("SaveFrom Error:", e)
-
-    # 3-USUL: Cobalt Mirror Engine
-    try:
-        c_headers = {"Accept": "application/json", "Content-Type": "application/json"}
-        c_res = requests.post("https://co.wuk.sh/api/json", json={"url": clean_url}, headers=c_headers, timeout=10)
-        if c_res.status_code == 200:
-            c_url = c_res.json().get("url")
-            if c_url:
-                v_res = requests.get(c_url, stream=True, timeout=20)
-                with open(file_path, 'wb') as f:
-                    for chunk in v_res.iter_content(chunk_size=1024*1024):
-                        if chunk:
-                            f.write(chunk)
-                if os.path.exists(file_path) and os.path.getsize(file_path) > 10000:
-                    return file_path
-    except Exception as e:
-        print("Cobalt Error:", e)
-
-    return None
-
 def download_pinterest_media(url, user_id):
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
@@ -451,7 +387,7 @@ async def callback_handler(client, callback_query):
                 media_file_cache[user_id] = out_file
                 await client.send_video(
                     chat_id=user_id,
-                    video=out_file,
+                    video=file_name,
                     caption=f"🎬 Sifat: **{quality}**\n🤖 Bot: {BOT_SIGNATURE}",
                     reply_markup=get_post_download_buttons(user_id),
                     progress=progress_status,
@@ -517,4 +453,107 @@ async def handle_user_messages(client, message):
                 pass
         else:
             try:
-                a
+                await hourglass_msg.delete()
+            except:
+                pass
+            await message.reply_text("❌ YouTube ma'lumotlarini olib bo'lmadi.")
+
+    elif is_pinterest:
+        hourglass_msg = await message.reply_text("⏳")
+        try:
+            await message.delete()
+        except:
+            pass
+
+        media_type, file_path = await asyncio.to_thread(download_pinterest_media, text, user_id)
+
+        if file_path and os.path.exists(file_path):
+            status = await client.send_message(user_id, "📤 **Fayl yuborilmoqda...**")
+            
+            if media_type == "video":
+                media_file_cache[user_id] = file_path
+                await client.send_video(
+                    chat_id=user_id,
+                    video=file_path,
+                    caption=f"✅ **Pinterest videosi yuklab olindi!**\n🤖 Bot: {BOT_SIGNATURE}",
+                    reply_markup=get_post_download_buttons(user_id),
+                    progress=progress_status,
+                    progress_args=(status, "📤 **Video yuborilmoqda...**")
+                )
+            else:
+                await client.send_photo(
+                    chat_id=user_id,
+                    photo=file_path,
+                    caption=f"✅ **Pinterest rasmi yuklab olindi!**\n🤖 Bot: {BOT_SIGNATURE}",
+                    progress=progress_status,
+                    progress_args=(status, "📤 **Rasm yuborilmoqda...**")
+                )
+                os.remove(file_path)
+
+            await status.delete()
+            try:
+                await hourglass_msg.delete()
+            except:
+                pass
+        else:
+            try:
+                await hourglass_msg.delete()
+            except:
+                pass
+            await client.send_message(user_id, "❌ Pinterest faylini yuklab bo'lmadi.")
+
+    elif is_other_social:
+        hourglass_msg = await message.reply_text("⏳")
+        try:
+            await message.delete()
+        except:
+            pass
+
+        file_name = f"social_{user_id}_{int(time.time())}.mp4"
+
+        # Instagram va TikTok blokirovkasini chetlab o'tuvchi maxsus buyruq:
+        cmd = f'yt-dlp --no-check-certificate --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" -o "{file_name}" "{text}"'
+        process = await asyncio.create_subprocess_shell(cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        await process.communicate()
+
+        if os.path.exists(file_name) and os.path.getsize(file_name) > 0:
+            media_file_cache[user_id] = file_name
+            status = await client.send_message(user_id, "📤 **Video yuborilmoqda...**")
+            await client.send_video(
+                chat_id=user_id,
+                video=file_name,
+                caption=f"✅ **Video yuklab olindi!**\n🤖 Bot: {BOT_SIGNATURE}",
+                reply_markup=get_post_download_buttons(user_id),
+                progress=progress_status,
+                progress_args=(status, "📤 **Video yuborilmoqda...**")
+            )
+            await status.delete()
+            try:
+                await hourglass_msg.delete()
+            except:
+                pass
+        else:
+            try:
+                await hourglass_msg.delete()
+            except:
+                pass
+            await client.send_message(user_id, "❌ Videoni yuklab bo'lmadi. Linkni qayta tekshiring.")
+
+    elif mode == "ai":
+        status = await message.reply_text("🤔 **AI o'ylamoqda...**")
+        try:
+            response = await asyncio.to_thread(
+                g4f.ChatCompletion.create,
+                model=g4f.models.gpt_4,
+                messages=[{"role": "user", "content": text}]
+            )
+            await status.edit_text(f"🧠 **AI Javobi:**\n\n{response}\n\n🤖 {BOT_SIGNATURE}", reply_markup=BACK_BUTTON)
+        except Exception as e:
+            await status.edit_text(f"❌ Xatolik: {str(e)}", reply_markup=BACK_BUTTON)
+
+    else:
+        pass
+
+if __name__ == "__main__":
+    print("🚀 Bot to'liq va barcha imkoniyatlar bilan qayta ishga tushdi!")
+    app.run()

@@ -65,34 +65,54 @@ def get_post_download_buttons(user_id):
 
 ALL_QUALITIES = [144, 240, 360, 480, 720, 1080, 1440, 2160]
 
-def download_instagram_universal(raw_url, user_id):
-    """Instagram va TikTok uchun 100% block bo'lmaydigan universal scraper"""
+def download_instagram_cobalt(raw_url, user_id):
+    """Cobalt Engine orqali Instagram/TikTok kontentlarini ishonchli yuklash"""
     clean_url = raw_url.split("?")[0].strip()
     file_path = f"insta_{user_id}_{int(time.time())}.mp4"
 
-    # 1-USUL: Direct SnapInsta Web Parser Engine
-    try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            "Referer": "https://snapinsta.app/"
-        }
-        res = requests.post("https://snapinsta.app/action2.php", data={"url": clean_url}, headers=headers, timeout=12)
-        if res.status_code == 200:
-            soup = BeautifulSoup(res.text, 'html.parser')
-            download_a = soup.find('a', class_='abutton') or soup.find('a', href=re.compile(r'download|cdninstagram|fbcdn'))
-            if download_a and download_a.get('href'):
-                v_url = download_a['href']
-                v_res = requests.get(v_url, stream=True, timeout=25)
-                with open(file_path, 'wb') as f:
-                    for chunk in v_res.iter_content(chunk_size=1024*1024):
-                        if chunk:
-                            f.write(chunk)
-                if os.path.exists(file_path) and os.path.getsize(file_path) > 10000:
-                    return file_path
-    except Exception as e:
-        print("SnapInsta Engine Error:", e)
+    # Cobalt API Instances
+    cobalt_instances = [
+        "https://co.wuk.sh/api/json",
+        "https://api.cobalt.tools/api/json",
+        "https://cobalt.q13.re/api/json"
+    ]
 
-    # 2-USUL: Fast Open SaveFrom CDN
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
+
+    payload = {
+        "url": clean_url,
+        "vQuality": "720"
+    }
+
+    for instance in cobalt_instances:
+        try:
+            res = requests.post(instance, json=payload, headers=headers, timeout=12)
+            if res.status_code == 200:
+                data = res.json()
+                media_url = data.get("url")
+                
+                # Agar karusel bo'lsa (picker)
+                if not media_url and data.get("picker"):
+                    picker = data.get("picker", [])
+                    if len(picker) > 0:
+                        media_url = picker[0].get("url")
+
+                if media_url:
+                    v_res = requests.get(media_url, stream=True, timeout=25)
+                    with open(file_path, 'wb') as f:
+                        for chunk in v_res.iter_content(chunk_size=1024*1024):
+                            if chunk:
+                                f.write(chunk)
+                    if os.path.exists(file_path) and os.path.getsize(file_path) > 5000:
+                        return file_path
+        except Exception as e:
+            print(f"Cobalt {instance} Error:", e)
+
+    # Backup Direct Scraper
     try:
         sf_url = f"https://worker.sf-api.com/service-fast-download/get?url={clean_url}"
         sf_res = requests.get(sf_url, timeout=10)
@@ -105,33 +125,10 @@ def download_instagram_universal(raw_url, user_id):
                     for chunk in v_res.iter_content(chunk_size=1024*1024):
                         if chunk:
                             f.write(chunk)
-                if os.path.exists(file_path) and os.path.getsize(file_path) > 10000:
+                if os.path.exists(file_path) and os.path.getsize(file_path) > 5000:
                     return file_path
     except Exception as e:
-        print("SaveFrom Engine Error:", e)
-
-    # 3-USUL: RapidAPI Insta Engine
-    try:
-        url = "https://instagram-reels-downloader-api.p.rapidapi.com/download"
-        querystring = {"url": clean_url}
-        headers = {
-            "x-rapidapi-key": "26dd2049a8msh710c3fd6a3de040p15d588jsnbfd3a48b3910",
-            "x-rapidapi-host": "instagram-reels-downloader-api.p.rapidapi.com"
-        }
-        res = requests.get(url, headers=headers, params=querystring, timeout=15)
-        if res.status_code == 200:
-            urls = re.findall(r'https?://[^\s"\'<>]+', res.text)
-            for u in urls:
-                if ".mp4" in u or "cdninstagram" in u or "fbcdn" in u:
-                    v_res = requests.get(u, stream=True, timeout=25)
-                    with open(file_path, 'wb') as f:
-                        for chunk in v_res.iter_content(chunk_size=1024*1024):
-                            if chunk:
-                                f.write(chunk)
-                    if os.path.exists(file_path) and os.path.getsize(file_path) > 10000:
-                        return file_path
-    except Exception as e:
-        print("RapidAPI Engine Error:", e)
+        print("Backup Scraper Error:", e)
 
     return None
 
@@ -581,7 +578,7 @@ async def handle_user_messages(client, message):
         except:
             pass
 
-        file_path = await asyncio.to_thread(download_instagram_universal, text, user_id)
+        file_path = await asyncio.to_thread(download_instagram_cobalt, text, user_id)
 
         if file_path and os.path.exists(file_path) and os.path.getsize(file_path) > 0:
             media_file_cache[user_id] = file_path
@@ -621,12 +618,11 @@ async def handle_user_messages(client, message):
     else:
         pass
 
-# Render Web Service uchun port ochib beruvchi server:
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Bot Render'da 24/7 ishlamoqda!")
+        self.wfile.write(b"Bot Cobalt Engine bilan 24/7 ishlamoqda!")
 
 def run_dummy_server():
     port = int(os.environ.get("PORT", 8080))
@@ -635,5 +631,5 @@ def run_dummy_server():
 
 if __name__ == "__main__":
     threading.Thread(target=run_dummy_server, daemon=True).start()
-    print("🚀 Bot Render'da universal scraper bilan ishga tushdi!")
+    print("🚀 Bot Cobalt Engine bilan ishga tushdi!")
     app.run()

@@ -98,10 +98,8 @@ def download_pinterest_media(url, user_id):
     return None, None
 
 async def recognize_audio_shazam(video_path):
-    """100% BEPUL VA CHEKSIZ SHAZAM API"""
     try:
         audio_sample = f"{video_path}_sample.mp3"
-        # 5 sekundlik juda qisqa videolarni ham muammosiz qamrab oladi
         cmd = f'ffmpeg -y -i "{video_path}" -vn -ar 44100 -ac 2 -t 10 -f mp3 "{audio_sample}"'
         proc = await asyncio.create_subprocess_shell(cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         await proc.communicate()
@@ -527,4 +525,35 @@ async def handle_user_messages(client, message):
                 caption=f"✅ **Video yuklab olindi!**\n🤖 Bot: {BOT_SIGNATURE}",
                 reply_markup=get_post_download_buttons(user_id),
                 progress=progress_status,
-                progress_args=(status, "📤 **Video yubo
+                progress_args=(status, "📤 **Video yuborilmoqda...**")
+            )
+            await status.delete()
+            try:
+                await hourglass_msg.delete()
+            except:
+                pass
+        else:
+            try:
+                await hourglass_msg.delete()
+            except:
+                pass
+            await client.send_message(user_id, "❌ Videoni yuklab bo'lmadi. Linkni qayta tekshiring.")
+
+    elif mode == "ai":
+        status = await message.reply_text("🤔 **AI o'ylamoqda...**")
+        try:
+            response = await asyncio.to_thread(
+                g4f.ChatCompletion.create,
+                model=g4f.models.gpt_4,
+                messages=[{"role": "user", "content": text}]
+            )
+            await status.edit_text(f"🧠 **AI Javobi:**\n\n{response}\n\n🤖 {BOT_SIGNATURE}", reply_markup=BACK_BUTTON)
+        except Exception as e:
+            await status.edit_text(f"❌ Xatolik: {str(e)}", reply_markup=BACK_BUTTON)
+
+    else:
+        pass
+
+if __name__ == "__main__":
+    print("🚀 Bot rasmiy va bepul Shazam API bilan ishga tushdi!")
+    app.run()

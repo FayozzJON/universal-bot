@@ -97,24 +97,20 @@ def download_pinterest_media(url, user_id):
 async def recognize_audio_direct(video_path):
     try:
         audio_sample = f"{video_path}_sample.mp3"
-        # Claude aytganidek: boshidagi sukunatni o'tkazib yuborish uchun -ss 3 qilib to'g'riladik
         cmd = f'ffmpeg -y -ss 3 -i "{video_path}" -vn -ar 44100 -ac 2 -t 15 -f mp3 "{audio_sample}"'
         proc = await asyncio.create_subprocess_shell(cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         await proc.communicate()
 
         if not os.path.exists(audio_sample) or os.path.getsize(audio_sample) == 0:
-            print("❌ Audio sample yaratilmadi yoki bo'sh.")
+            print("❌ Audio sample yaratilmadi.")
             return None, []
 
         print(f"📁 Audio sample hajmi: {os.path.getsize(audio_sample)} bayt")
 
         with open(audio_sample, 'rb') as f:
             files = {'file': f}
-            # AudD ga so'rov yuborish
             res = requests.post("https://api.audd.io/", data={'api_token': 'test'}, files=files)
             res_json = res.json()
-            
-            # Claude so'ragan LOG ni chiqaramiz
             print("🎵 AUDD RESPONSE:", res_json)
 
         if os.path.exists(audio_sample):
@@ -311,7 +307,7 @@ async def callback_handler(client, callback_query):
             music_keyboard = InlineKeyboardMarkup(row_buttons)
             await client.send_message(user_id, music_text, reply_markup=music_keyboard)
         else:
-            await client.send_message(user_id, "❌ Videodagi qo'shiqni aniqlab bo'lmadi. (AudD limit yoki token cheklovi)")
+            await client.send_message(user_id, "❌ Videodagi qo'shiqni aniqlab bo'lmadi.")
 
         try:
             await hourglass_msg.delete()
@@ -523,4 +519,42 @@ async def handle_user_messages(client, message):
 
         if os.path.exists(file_name) and os.path.getsize(file_name) > 0:
             media_file_cache[user_id] = file_name
-            status = await client.send_mess
+            status = await client.send_message(user_id, "📤 **Video yuborilmoqda...**")
+            await client.send_video(
+                chat_id=user_id,
+                video=file_name,
+                caption=f"✅ **Video yuklab olindi!**\n🤖 Bot: {BOT_SIGNATURE}",
+                reply_markup=get_post_download_buttons(user_id),
+                progress=progress_status,
+                progress_args=(status, "📤 **Video yuborilmoqda...**")
+            )
+            await status.delete()
+            try:
+                await hourglass_msg.delete()
+            except:
+                pass
+        else:
+            try:
+                await hourglass_msg.delete()
+            except:
+                pass
+            await client.send_message(user_id, "❌ Videoni yuklab bo'lmadi. Linkni qayta tekshiring.")
+
+    elif mode == "ai":
+        status = await message.reply_text("🤔 **AI o'ylamoqda...**")
+        try:
+            response = await asyncio.to_thread(
+                g4f.ChatCompletion.create,
+                model=g4f.models.gpt_4,
+                messages=[{"role": "user", "content": text}]
+            )
+            await status.edit_text(f"🧠 **AI Javobi:**\n\n{response}\n\n🤖 {BOT_SIGNATURE}", reply_markup=BACK_BUTTON)
+        except Exception as e:
+            await status.edit_text(f"❌ Xatolik: {str(e)}", reply_markup=BACK_BUTTON)
+
+    else:
+        pass
+
+if __name__ == "__main__":
+    print("🚀 Bot to'g'rilangan kod bilan qayta ishga tushdi!")
+    app.run()

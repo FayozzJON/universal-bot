@@ -63,59 +63,67 @@ def get_post_download_buttons(user_id):
 
 ALL_QUALITIES = [144, 240, 360, 480, 720, 1080, 1440, 2160]
 
-def download_instagram_fast(raw_url, user_id):
-    """Instagram va TikTok videolarni tozalangan havola va 3 xil zaxira API orqali yuklash"""
-    # URL oxiridagi ?igsh=... kabi ortiqcha belgilarni tozalaymiz
+def download_instagram_direct(raw_url, user_id):
+    """Instagram Cloud IP-blockni chetlab o'tuvchi ko'p bosqichli API yuklagich"""
     clean_url = raw_url.split("?")[0].strip()
     file_path = f"insta_{user_id}_{int(time.time())}.mp4"
 
-    # 1-USUL: Cobalt API
+    # 1-USUL: FastSnap/SnapInsta Web Parser
     try:
-        headers = {
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        req_headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            "Referer": "https://snapinsta.app/"
         }
-        res = requests.post("https://api.cobalt.tools/api/json", json={"url": clean_url}, headers=headers, timeout=12)
+        res = requests.post("https://snapinsta.app/action2.php", data={"url": clean_url}, headers=req_headers, timeout=10)
         if res.status_code == 200:
-            v_url = res.json().get("url")
-            if v_url:
-                v_res = requests.get(v_url, stream=True, timeout=25)
+            soup = BeautifulSoup(res.text, 'html.parser')
+            download_a = soup.find('a', class_='abutton') or soup.find('a', text=re.compile(r'Download', re.I))
+            if download_a and download_a.get('href'):
+                v_url = download_a['href']
+                v_res = requests.get(v_url, stream=True, timeout=20)
                 with open(file_path, 'wb') as f:
                     for chunk in v_res.iter_content(chunk_size=1024*1024):
                         if chunk:
                             f.write(chunk)
-                if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+                if os.path.exists(file_path) and os.path.getsize(file_path) > 10000:
                     return file_path
     except Exception as e:
-        print("Cobalt API Error:", e)
+        print("SnapInsta Error:", e)
 
-    # 2-USUL: Zotpy API
+    # 2-USUL: SaveFrom / SSInstagram API
     try:
-        api_url = f"https://api.v2.zotpy.com/download?url={clean_url}"
-        res2 = requests.get(api_url, timeout=12)
-        if res2.status_code == 200:
-            data = res2.json()
-            v_url = data.get("url") or data.get("video_url")
-            if v_url:
-                v_res = requests.get(v_url, stream=True, timeout=25)
+        sf_url = f"https://worker.sf-api.com/service-fast-download/get?url={clean_url}"
+        sf_res = requests.get(sf_url, timeout=10)
+        if sf_res.status_code == 200:
+            sf_json = sf_res.json()
+            if sf_json.get("url"):
+                media_link = sf_json["url"][0]["url"]
+                v_res = requests.get(media_link, stream=True, timeout=20)
                 with open(file_path, 'wb') as f:
                     for chunk in v_res.iter_content(chunk_size=1024*1024):
                         if chunk:
                             f.write(chunk)
-                if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+                if os.path.exists(file_path) and os.path.getsize(file_path) > 10000:
                     return file_path
     except Exception as e:
-        print("Zotpy API Error:", e)
+        print("SaveFrom Error:", e)
 
-    # 3-USUL: yt-dlp (Tozalangan havola bilan)
+    # 3-USUL: Cobalt Mirror Engine
     try:
-        cmd = f'yt-dlp --no-check-certificate --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" -o "{file_path}" "{clean_url}"'
-        os.system(cmd)
-        if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
-            return file_path
+        c_headers = {"Accept": "application/json", "Content-Type": "application/json"}
+        c_res = requests.post("https://co.wuk.sh/api/json", json={"url": clean_url}, headers=c_headers, timeout=10)
+        if c_res.status_code == 200:
+            c_url = c_res.json().get("url")
+            if c_url:
+                v_res = requests.get(c_url, stream=True, timeout=20)
+                with open(file_path, 'wb') as f:
+                    for chunk in v_res.iter_content(chunk_size=1024*1024):
+                        if chunk:
+                            f.write(chunk)
+                if os.path.exists(file_path) and os.path.getsize(file_path) > 10000:
+                    return file_path
     except Exception as e:
-        print("yt-dlp Error:", e)
+        print("Cobalt Error:", e)
 
     return None
 
@@ -509,22 +517,4 @@ async def handle_user_messages(client, message):
                 pass
         else:
             try:
-                await hourglass_msg.delete()
-            except:
-                pass
-            await message.reply_text("❌ YouTube ma'lumotlarini olib bo'lmadi.")
-
-    elif is_pinterest:
-        hourglass_msg = await message.reply_text("⏳")
-        try:
-            await message.delete()
-        except:
-            pass
-
-        media_type, file_path = await asyncio.to_thread(download_pinterest_media, text, user_id)
-
-        if file_path and os.path.exists(file_path):
-            status = await client.send_message(user_id, "📤 **Fayl yuborilmoqda...**")
-            
-            if media_type == "video":
-                media_file_cache[user_id] = file_path
+                a

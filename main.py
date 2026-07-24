@@ -1,17 +1,3 @@
-from flask import Flask
-import threading
-
-web_app = Flask(__name__)
-
-@web_app.route('/')
-def home():
-    return "Bot is running 24/7!"
-
-def run_web():
-    web_app.run(host="0.0.0.0", port=10000)
-
-threading.Thread(target=run_web, daemon=True).start()
-
 import asyncio
 
 loop = asyncio.new_event_loop()
@@ -31,7 +17,13 @@ API_ID = 38154579
 API_HASH = "48ac2ee1584e889e0c696d158db6d2c5"
 BOT_TOKEN = "8961190627:AAGIwtujqYTf2Kt6iPXxGIN3uF7_jKA7d7Y"
 
-app = Client("universal_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+app = Client(
+    "universal_bot",
+    api_id=API_ID,
+    api_hash=API_HASH,
+    bot_token=BOT_TOKEN,
+    drop_pending_updates=True  # FLOOD NING OLDINI OLADI (Eski xabarlarni o'chiradi)
+)
 
 BOT_SIGNATURE = "@fazaHASASHIbot"
 
@@ -103,7 +95,6 @@ def download_pinterest_media(url, user_id):
     return None, None
 
 async def recognize_audio_direct(video_path):
-    """Videodagi musiqani to'g'ridan-to'g'ri API orqali aniqlash (Rust shart emas)"""
     try:
         audio_sample = f"{video_path}_sample.mp3"
         cmd = f'ffmpeg -y -i "{video_path}" -vn -ar 44100 -ac 2 -t 12 -f mp3 "{audio_sample}"'
@@ -113,11 +104,6 @@ async def recognize_audio_direct(video_path):
         if not os.path.exists(audio_sample):
             return None, []
 
-        # Open Shazam Web API endpoint
-        url = "https://amp.shazam.com/discovery/v5/en/US/android/-/tag/recognize"
-        headers = {'User-Agent': 'Mozilla/5.0 (Android)'}
-        
-        # Ovoz namunasini yuborish
         with open(audio_sample, 'rb') as f:
             files = {'file': f}
             res = requests.post("https://api.audd.io/?api_token=test", files=files)
@@ -242,25 +228,42 @@ async def callback_handler(client, callback_query):
     data = callback_query.data
     user_id = callback_query.message.chat.id
 
+    try:
+        await callback_query.answer()
+    except:
+        pass
+
     if data == "main_menu":
         user_mode[user_id] = "default"
-        await callback_query.message.reply_text("🤖 **Bosh menyu:**\nKerakli bo'limni tanlang:", reply_markup=MAIN_MENU)
+        try:
+            await callback_query.message.edit_text("🤖 **Bosh menyu:**\nKerakli bo'limni tanlang:", reply_markup=MAIN_MENU)
+        except:
+            await callback_query.message.reply_text("🤖 **Bosh menyu:**\nKerakli bo'limni tanlang:", reply_markup=MAIN_MENU)
 
     elif data == "menu_downloader":
         user_mode[user_id] = "downloader"
-        await callback_query.message.reply_text(
-            "🎬 **Social Media Downloader Bo'limi**\n\n"
-            "Menga **Instagram, TikTok, YouTube yoki Pinterest** linkini yuboring!",
-            reply_markup=BACK_BUTTON
-        )
+        try:
+            await callback_query.message.edit_text(
+                "🎬 **Social Media Downloader Bo'limi**\n\n"
+                "Menga **Instagram, TikTok, YouTube yoki Pinterest** linkini yuboring!",
+                reply_markup=BACK_BUTTON
+            )
+        except:
+            pass
 
     elif data == "menu_kino":
         user_mode[user_id] = "kino"
-        await callback_query.message.reply_text("🍿 **Kino Izlash Bo'limi**\n\n*(Ushbu bo'lim tez orada ishga tushadi)*", reply_markup=BACK_BUTTON)
+        try:
+            await callback_query.message.edit_text("🍿 **Kino Izlash Bo'limi**\n\n*(Ushbu bo'lim tez orada ishga tushadi)*", reply_markup=BACK_BUTTON)
+        except:
+            pass
 
     elif data == "menu_ai":
         user_mode[user_id] = "ai"
-        await callback_query.message.reply_text("🧠 **AI Yordamchi (ChatGPT) Bo'limi Yoniq!**\n\nMenga savolingizni yozing:", reply_markup=BACK_BUTTON)
+        try:
+            await callback_query.message.edit_text("🧠 **AI Yordamchi (ChatGPT) Bo'limi Yoniq!**\n\nMenga savolingizni yozing:", reply_markup=BACK_BUTTON)
+        except:
+            pass
 
     elif data == "menu_about":
         about_text = (
@@ -271,7 +274,10 @@ async def callback_handler(client, callback_query):
             "• 🧠 **AI Yordamchi** — Sun'iy intellekt orqali savollaringizga javob olish.\n\n"
             f"Bot: {BOT_SIGNATURE}"
         )
-        await callback_query.message.reply_text(about_text, reply_markup=BACK_BUTTON)
+        try:
+            await callback_query.message.edit_text(about_text, reply_markup=BACK_BUTTON)
+        except:
+            pass
 
     elif data.startswith("findmusic_"):
         video_path = media_file_cache.get(user_id)
@@ -279,8 +285,7 @@ async def callback_handler(client, callback_query):
             await callback_query.answer("❌ Video topilmadi, havola qayta yuboring!", show_alert=True)
             return
 
-        await callback_query.answer("🔎 Musiqa tahlil qilinmoqda...")
-        hourglass_msg = await client.send_message(user_id, "⏳")
+        hourglass_msg = await client.send_message(user_id, "⏳ Musiqa tahlil qilinmoqda...")
 
         song_name, results = await recognize_audio_direct(video_path)
         search_results_cache[user_id] = results
@@ -314,7 +319,6 @@ async def callback_handler(client, callback_query):
             return
 
         selected = user_results[idx]
-        await callback_query.answer("🎵 Musiqa yuklanmoqda...")
         status = await client.send_message(user_id, f"⏳ **{selected['title']}** yuklanmoqda...")
 
         out_mp3 = f"music_{user_id}_{int(time.time())}.mp3"
@@ -521,32 +525,4 @@ async def handle_user_messages(client, message):
                 progress_args=(status, "📤 **Video yuborilmoqda...**")
             )
             await status.delete()
-            try:
-                await hourglass_msg.delete()
-            except:
-                pass
-        else:
-            try:
-                await hourglass_msg.delete()
-            except:
-                pass
-            await client.send_message(user_id, "❌ Videoni yuklab bo'lmadi. Linkni qayta tekshiring.")
-
-    elif mode == "ai":
-        status = await message.reply_text("🤔 **AI o'ylamoqda...**")
-        try:
-            response = await asyncio.to_thread(
-                g4f.ChatCompletion.create,
-                model=g4f.models.gpt_4,
-                messages=[{"role": "user", "content": text}]
-            )
-            await status.edit_text(f"🧠 **AI Javobi:**\n\n{response}\n\n🤖 {BOT_SIGNATURE}", reply_markup=BACK_BUTTON)
-        except Exception as e:
-            await status.edit_text(f"❌ Xatolik: {str(e)}", reply_markup=BACK_BUTTON)
-
-    else:
-        await message.reply_text("Iltimos, menyudan kerakli bo'limni tanlang:", reply_markup=MAIN_MENU)
-
-if __name__ == "__main__":
-    print("🚀 Bot xatolar va Rust talablarisiz to'liq ishga tushdi!")
-    app.run()
+      

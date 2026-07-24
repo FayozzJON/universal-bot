@@ -63,6 +63,43 @@ def get_post_download_buttons(user_id):
 
 ALL_QUALITIES = [144, 240, 360, 480, 720, 1080, 1440, 2160]
 
+def download_instagram_fast(url, user_id):
+    """Instagram videolarni blokirovkalarsiz API orqali yuklab olish"""
+    file_path = f"insta_{user_id}_{int(time.time())}.mp4"
+    try:
+        api_url = f"https://api.v2.zotpy.com/download?url={url}"
+        res = requests.get(api_url, timeout=12)
+        if res.status_code == 200:
+            data = res.json()
+            video_url = data.get("url") or data.get("video_url")
+            if video_url:
+                v_res = requests.get(video_url, stream=True, timeout=25)
+                with open(file_path, 'wb') as f:
+                    for chunk in v_res.iter_content(chunk_size=1024*1024):
+                        if chunk:
+                            f.write(chunk)
+                return file_path
+    except Exception as e:
+        print("Instagram API Error:", e)
+
+    # Zaxira usuli (Cobalt)
+    try:
+        headers = {"Accept": "application/json", "Content-Type": "application/json"}
+        res2 = requests.post("https://co.wuk.sh/api/json", json={"url": url}, headers=headers, timeout=12)
+        if res2.status_code == 200:
+            v_url = res2.json().get("url")
+            if v_url:
+                v_res = requests.get(v_url, stream=True, timeout=25)
+                with open(file_path, 'wb') as f:
+                    for chunk in v_res.iter_content(chunk_size=1024*1024):
+                        if chunk:
+                            f.write(chunk)
+                return file_path
+    except Exception as e:
+        print("Cobalt API Error:", e)
+
+    return None
+
 def download_pinterest_media(url, user_id):
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
@@ -387,7 +424,7 @@ async def callback_handler(client, callback_query):
                 media_file_cache[user_id] = out_file
                 await client.send_video(
                     chat_id=user_id,
-                    video=file_name,
+                    video=out_file,
                     caption=f"🎬 Sifat: **{quality}**\n🤖 Bot: {BOT_SIGNATURE}",
                     reply_markup=get_post_download_buttons(user_id),
                     progress=progress_status,
@@ -490,70 +527,4 @@ async def handle_user_messages(client, message):
                 )
                 os.remove(file_path)
 
-            await status.delete()
-            try:
-                await hourglass_msg.delete()
-            except:
-                pass
-        else:
-            try:
-                await hourglass_msg.delete()
-            except:
-                pass
-            await client.send_message(user_id, "❌ Pinterest faylini yuklab bo'lmadi.")
-
-    elif is_other_social:
-        hourglass_msg = await message.reply_text("⏳")
-        try:
-            await message.delete()
-        except:
-            pass
-
-        file_name = f"social_{user_id}_{int(time.time())}.mp4"
-
-        # Instagram va TikTok blokirovkasini chetlab o'tuvchi maxsus buyruq:
-        cmd = f'yt-dlp --no-check-certificate --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" -o "{file_name}" "{text}"'
-        process = await asyncio.create_subprocess_shell(cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        await process.communicate()
-
-        if os.path.exists(file_name) and os.path.getsize(file_name) > 0:
-            media_file_cache[user_id] = file_name
-            status = await client.send_message(user_id, "📤 **Video yuborilmoqda...**")
-            await client.send_video(
-                chat_id=user_id,
-                video=file_name,
-                caption=f"✅ **Video yuklab olindi!**\n🤖 Bot: {BOT_SIGNATURE}",
-                reply_markup=get_post_download_buttons(user_id),
-                progress=progress_status,
-                progress_args=(status, "📤 **Video yuborilmoqda...**")
-            )
-            await status.delete()
-            try:
-                await hourglass_msg.delete()
-            except:
-                pass
-        else:
-            try:
-                await hourglass_msg.delete()
-            except:
-                pass
-            await client.send_message(user_id, "❌ Videoni yuklab bo'lmadi. Linkni qayta tekshiring.")
-
-    elif mode == "ai":
-        status = await message.reply_text("🤔 **AI o'ylamoqda...**")
-        try:
-            response = await asyncio.to_thread(
-                g4f.ChatCompletion.create,
-                model=g4f.models.gpt_4,
-                messages=[{"role": "user", "content": text}]
-            )
-            await status.edit_text(f"🧠 **AI Javobi:**\n\n{response}\n\n🤖 {BOT_SIGNATURE}", reply_markup=BACK_BUTTON)
-        except Exception as e:
-            await status.edit_text(f"❌ Xatolik: {str(e)}", reply_markup=BACK_BUTTON)
-
-    else:
-        pass
-
-if __name__ == "__main__":
-    print("🚀 Bot to'liq va barcha imkoniyatlar bilan qayta ishga tushdi!")
-    app.run()
+            

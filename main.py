@@ -67,8 +67,18 @@ def get_post_download_buttons(user_id):
 
 ALL_QUALITIES = [144, 240, 360, 480, 720, 1080, 1440, 2160]
 
+def cleanup_old_file(user_id):
+    """Eski vaqtinchalik video faylini xotiradan o'chirish"""
+    old_path = media_file_cache.get(user_id)
+    if old_path and os.path.exists(old_path):
+        try:
+            os.remove(old_path)
+        except Exception:
+            pass
+
 async def download_instagram_ytdlp(raw_url, user_id):
     """Instagram videolarni yt-dlp injini orqali yuklash"""
+    cleanup_old_file(user_id)
     clean_url = raw_url.split("?")[0].strip()
     file_path = f"insta_{user_id}_{int(time.time())}.mp4"
 
@@ -85,6 +95,7 @@ async def download_instagram_ytdlp(raw_url, user_id):
     return None
 
 def download_pinterest_media(url, user_id):
+    cleanup_old_file(user_id)
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
         response = requests.get(url, headers=headers, allow_redirects=True, timeout=10)
@@ -118,12 +129,12 @@ def download_pinterest_media(url, user_id):
     return None, None
 
 async def recognize_audio_shazam(video_path):
-    """Render uchun ffmpeg o'rnatilgan holda Shazam orqali musiqa topish"""
+    """FFmpeg orqali audio ajratish va Shazam bilan musiqa aniqlash"""
     try:
         ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
         audio_sample = f"{video_path}_sample.mp3"
         
-        cmd = f'"{ffmpeg_exe}" -y -i "{video_path}" -vn -ar 44100 -ac 2 -t 10 -f mp3 "{audio_sample}"'
+        cmd = f'"{ffmpeg_exe}" -y -i "{video_path}" -vn -ar 44100 -ac 2 -t 12 -f mp3 "{audio_sample}"'
         proc = await asyncio.create_subprocess_shell(cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         await proc.communicate()
 
@@ -308,7 +319,7 @@ async def callback_handler(client, callback_query):
     elif data.startswith("findmusic_"):
         video_path = media_file_cache.get(user_id)
         if not video_path or not os.path.exists(video_path):
-            await callback_query.answer("❌ Video topilmadi, havola qayta yuboring!", show_alert=True)
+            await callback_query.answer("❌ Video topilmadi, qayta yuklang!", show_alert=True)
             return
 
         hourglass_msg = await client.send_message(user_id, "⏳ Shazam orqali musiqa tahlil qilinmoqda...")
@@ -317,19 +328,17 @@ async def callback_handler(client, callback_query):
         search_results_cache[user_id] = results
 
         if song_name and results:
-            music_text = f"🎵 **{song_name}**\n\n"
+            music_text = f"🎵 **Topilgan qo'shiq:** {song_name}\n\n👇 **Yuklab olish uchun raqamni bosing:**\n\n"
             num_buttons = []
             for idx, res in enumerate(results, 1):
-                music_text += f"**{idx}.** {res['title']} **{res['duration']}**\n"
+                music_text += f"**{idx}.** {res['title']} (**{res['duration']}**)\n"
                 num_buttons.append(InlineKeyboardButton(str(idx), callback_data=f"dlmusic_{idx-1}"))
 
             row_buttons = [num_buttons[i:i+5] for i in range(0, len(num_buttons), 5)]
-            row_buttons.insert(0, [InlineKeyboardButton("📁 Video", callback_data="menu_downloader")])
-
             music_keyboard = InlineKeyboardMarkup(row_buttons)
             await client.send_message(user_id, music_text, reply_markup=music_keyboard)
         else:
-            await client.send_message(user_id, "❌ Videodagi qo'shiqni Shazam topa olmadi.")
+            await client.send_message(user_id, "❌ Videodagi qo'shiqni Shazam aniqlay olmadi.")
 
         try:
             await hourglass_msg.delete()
@@ -428,7 +437,7 @@ async def handle_user_messages(client, message):
     mode = user_mode.get(user_id, "default")
 
     current_time = time.time()
-    if user_id in processed_messages and (current_time - processed_messages[user_id]) < 5:
+    if user_id in processed_messages and (current_time - processed_messages[user_id]) < 3:
         return
     processed_messages[user_id] = current_time
 
@@ -517,7 +526,6 @@ async def handle_user_messages(client, message):
                     progress=progress_status,
                     progress_args=(status, "📤 **Rasm yuborilmoqda...**")
                 )
-                os.remove(file_path)
 
             await status.delete()
             try:
@@ -582,7 +590,7 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Bot 24/7 ishlamoqda!")
+        self.wfile.write(b"Bot Shazam va Media Kesh xotirasi bilan 24/7 ishlamoqda!")
 
 def run_dummy_server():
     port = int(os.environ.get("PORT", 8080))
@@ -601,5 +609,5 @@ def keep_alive_ping():
 if __name__ == "__main__":
     threading.Thread(target=run_dummy_server, daemon=True).start()
     threading.Thread(target=keep_alive_ping, daemon=True).start()
-    print("🚀 Bot Shazam FFmpeg integratsiyasi bilan ishga tushdi!")
+    print("🚀 Bot Shazam xotira xatolarisiz qayta ishga tushdi!")
     app.run()

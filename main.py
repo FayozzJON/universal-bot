@@ -34,6 +34,7 @@ yt_cache = {}
 media_file_cache = {}
 search_results_cache = {}
 last_update = {}
+processed_messages = {}  # Takroriy xabarlarni ushlab qoluvchi xotira
 
 shazam = Shazam()
 
@@ -66,44 +67,21 @@ def get_post_download_buttons(user_id):
 ALL_QUALITIES = [144, 240, 360, 480, 720, 1080, 1440, 2160]
 
 async def download_instagram_ytdlp(raw_url, user_id):
-    """Instagram videolarni yt-dlp va Cobalt orqali yuklash va xatoni tahlil qilish"""
+    """Instagram videolarni yt-dlp injini orqali muvaffaqiyatli yuklash"""
     clean_url = raw_url.split("?")[0].strip()
     file_path = f"insta_{user_id}_{int(time.time())}.mp4"
 
-    # 1-USUL: yt-dlp injinidan foydalanish
     try:
         cmd = f'yt-dlp --no-warnings --format "mp4/best" -o "{file_path}" "{clean_url}"'
         proc = await asyncio.create_subprocess_shell(cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        stdout, stderr = await proc.communicate()
+        await proc.communicate()
 
         if os.path.exists(file_path) and os.path.getsize(file_path) > 5000:
-            return file_path, None
+            return file_path
     except Exception as e:
         print("yt-dlp Instagram Error:", e)
 
-    # 2-USUL: Rapid API Fallback
-    try:
-        rapid_url = "https://instagram-downloader-v2.p.rapidapi.com/media"
-        headers = {
-            "x-rapidapi-key": "26dd2049a8msh710c3fd6a3de040p15d588jsnbfd3a48b3910",
-            "x-rapidapi-host": "instagram-downloader-v2.p.rapidapi.com"
-        }
-        res = requests.get(rapid_url, headers=headers, params={"url": clean_url}, timeout=12)
-        if res.status_code == 200:
-            data = res.json()
-            media_url = data.get("url") or data.get("media") or (data.get("data", {}).get("url") if isinstance(data.get("data"), dict) else None)
-            if media_url:
-                v_res = requests.get(media_url, stream=True, timeout=25)
-                with open(file_path, 'wb') as f:
-                    for chunk in v_res.iter_content(chunk_size=1024*1024):
-                        if chunk:
-                            f.write(chunk)
-                if os.path.exists(file_path) and os.path.getsize(file_path) > 5000:
-                    return file_path, None
-    except Exception as e:
-        print("RapidAPI Direct Error:", e)
-
-    return None, "Server tomonidan Instagram so'rovi rad etildi (403/CloudBlock)."
+    return None
 
 def download_pinterest_media(url, user_id):
     try:
@@ -442,8 +420,15 @@ async def callback_handler(client, callback_query):
 @app.on_message(filters.private & filters.text & ~filters.command(["start", "stop"]))
 async def handle_user_messages(client, message):
     user_id = message.chat.id
+    msg_id = message.id
     text = message.text
     mode = user_mode.get(user_id, "default")
+
+    # Takroriy so'rovlarni bloklash (Deduplication)
+    current_time = time.time()
+    if user_id in processed_messages and (current_time - processed_messages[user_id]) < 5:
+        return
+    processed_messages[user_id] = current_time
 
     is_yt = re.search(r"(youtube\.com|youtu\.be)", text)
     is_pinterest = re.search(r"(pinterest\.com|pin\.it)", text)
@@ -551,7 +536,7 @@ async def handle_user_messages(client, message):
         except:
             pass
 
-        file_path, err_msg = await download_instagram_ytdlp(text, user_id)
+        file_path = await download_instagram_ytdlp(text, user_id)
 
         if file_path and os.path.exists(file_path) and os.path.getsize(file_path) > 0:
             media_file_cache[user_id] = file_path
@@ -569,13 +554,14 @@ async def handle_user_messages(client, message):
                 await hourglass_msg.delete()
             except:
                 pass
+            if os.path.exists(file_path):
+                os.remove(file_path)
         else:
             try:
                 await hourglass_msg.delete()
             except:
                 pass
-            err = err_msg if err_msg else "Videoni yuklab bo'lmadi."
-            await message.reply_text(f"❌ **Xatolik:** {err}")
+            await message.reply_text("❌ Videoni yuklab bo'lmadi.")
 
     elif mode == "ai":
         status = await message.reply_text("🤔 **AI o'ylamoqda...**")
@@ -615,5 +601,5 @@ def keep_alive_ping():
 if __name__ == "__main__":
     threading.Thread(target=run_dummy_server, daemon=True).start()
     threading.Thread(target=keep_alive_ping, daemon=True).start()
-    print("🚀 Bot yt-dlp injini bilan ishga tushdi!")
+    print("🚀 Bot takroriy so'rovlar filtriga ega holda ishga tushdi!")
     app.run()

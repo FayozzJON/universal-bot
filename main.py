@@ -76,38 +76,49 @@ def cleanup_old_file(user_id):
             pass
 
 async def download_instagram_media(raw_url, user_id):
-    """Instagram video va rasmlarini xatosiz yuklash"""
+    """Instagram video va rasmlarini asl HD sifatda, kesmasdan yuklash"""
     cleanup_old_file(user_id)
     clean_url = raw_url.split("?")[0].strip()
-    file_path = f"insta_{user_id}_{int(time.time())}.mp4"
+    base_path = f"insta_{user_id}_{int(time.time())}"
 
-    # 1. Avval video sifatida yuklab ko'ramiz
+    # 1. yt-dlp orqali asl faylni (video yoki rasm) yuklash
     try:
-        cmd = f'yt-dlp --no-warnings --format "mp4/best" -o "{file_path}" "{clean_url}"'
+        cmd = f'yt-dlp --no-warnings --write-thumbnail --no-clean-pages -o "{base_path}.%(ext)s" "{clean_url}"'
         proc = await asyncio.create_subprocess_shell(cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         await proc.communicate()
 
-        if os.path.exists(file_path) and os.path.getsize(file_path) > 5000:
-            return "video", file_path
-    except Exception as e:
-        print("yt-dlp Instagram Video Error:", e)
+        # Video topilgan bo'lsa
+        if os.path.exists(f"{base_path}.mp4") and os.path.getsize(f"{base_path}.mp4") > 5000:
+            return "video", f"{base_path}.mp4"
 
-    # 2. Agar video bo'lmasa, rasm sifatida ajratib olamiz
-    try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-        response = await asyncio.to_thread(requests.get, clean_url, headers=headers, timeout=10)
-        soup = BeautifulSoup(response.content, 'html.parser')
-        
-        og_image = soup.find("meta", property="og:image")
-        if og_image and og_image.get("content"):
-            img_url = og_image["content"]
-            i_res = await asyncio.to_thread(requests.get, img_url, headers=headers)
-            img_path = f"insta_img_{user_id}_{int(time.time())}.jpg"
-            with open(img_path, 'wb') as f:
-                f.write(i_res.content)
-            return "photo", img_path
+        # Rasm topilgan bo'lsa
+        for ext in ["jpg", "png", "webp"]:
+            if os.path.exists(f"{base_path}.{ext}"):
+                return "photo", f"{base_path}.{ext}"
     except Exception as e:
-        print("Instagram Photo DL Error:", e)
+        print("yt-dlp Inst DL Error:", e)
+
+    # 2. Zaxira usul: JSON orqali asl HD rasmni olish
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1'
+        }
+        json_url = clean_url.rstrip('/') + '/?__a=1&__d=dis'
+        response = await asyncio.to_thread(requests.get, json_url, headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            items = data.get('items', [{}])[0]
+            image_versions = items.get('image_versions2', {}).get('candidates', [])
+            if image_versions:
+                hd_img_url = image_versions[0].get('url')
+                img_res = await asyncio.to_thread(requests.get, hd_img_url, headers=headers)
+                img_path = f"{base_path}_hd.jpg"
+                with open(img_path, 'wb') as f:
+                    f.write(img_res.content)
+                return "photo", img_path
+    except Exception as e:
+        print("Instagram HD Photo Fallback Error:", e)
 
     return None, None
 
@@ -158,7 +169,6 @@ async def recognize_audio_shazam(video_path):
         if not os.path.exists(audio_sample) or os.path.getsize(audio_sample) == 0:
             return None, []
 
-        # Audioni bayt ko'rinishida o'qib Shazam'ga uzatamiz (Xatolikni yo'qotadi)
         with open(audio_sample, 'rb') as f:
             audio_bytes = f.read()
 
@@ -641,5 +651,5 @@ def keep_alive_ping():
 if __name__ == "__main__":
     threading.Thread(target=run_dummy_server, daemon=True).start()
     threading.Thread(target=keep_alive_ping, daemon=True).start()
-    print("🚀 Bot Shazam va Instagram Rasmlari to'g'rilangan holda ishga tushdi!")
+    print("🚀 Bot Shazam va HD Rasmlar tuzatilgan holda ishga tushdi!")
     app.run()

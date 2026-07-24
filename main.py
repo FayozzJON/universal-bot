@@ -68,7 +68,6 @@ def get_post_download_buttons(user_id):
 ALL_QUALITIES = [144, 240, 360, 480, 720, 1080, 1440, 2160]
 
 def cleanup_old_file(user_id):
-    """Eski vaqtinchalik video faylini xotiradan o'chirish"""
     old_path = media_file_cache.get(user_id)
     if old_path and os.path.exists(old_path):
         try:
@@ -76,23 +75,41 @@ def cleanup_old_file(user_id):
         except Exception:
             pass
 
-async def download_instagram_ytdlp(raw_url, user_id):
-    """Instagram videolarni yt-dlp orqali yuklash"""
+async def download_instagram_media(raw_url, user_id):
+    """Instagram video va rasmlarini xatosiz yuklash"""
     cleanup_old_file(user_id)
     clean_url = raw_url.split("?")[0].strip()
     file_path = f"insta_{user_id}_{int(time.time())}.mp4"
 
+    # 1. Avval video sifatida yuklab ko'ramiz
     try:
         cmd = f'yt-dlp --no-warnings --format "mp4/best" -o "{file_path}" "{clean_url}"'
         proc = await asyncio.create_subprocess_shell(cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         await proc.communicate()
 
         if os.path.exists(file_path) and os.path.getsize(file_path) > 5000:
-            return file_path
+            return "video", file_path
     except Exception as e:
-        print("yt-dlp Instagram Error:", e)
+        print("yt-dlp Instagram Video Error:", e)
 
-    return None
+    # 2. Agar video bo'lmasa, rasm sifatida ajratib olamiz
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        response = await asyncio.to_thread(requests.get, clean_url, headers=headers, timeout=10)
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        og_image = soup.find("meta", property="og:image")
+        if og_image and og_image.get("content"):
+            img_url = og_image["content"]
+            i_res = await asyncio.to_thread(requests.get, img_url, headers=headers)
+            img_path = f"insta_img_{user_id}_{int(time.time())}.jpg"
+            with open(img_path, 'wb') as f:
+                f.write(i_res.content)
+            return "photo", img_path
+    except Exception as e:
+        print("Instagram Photo DL Error:", e)
+
+    return None, None
 
 def download_pinterest_media(url, user_id):
     cleanup_old_file(user_id)
@@ -129,7 +146,7 @@ def download_pinterest_media(url, user_id):
     return None, None
 
 async def recognize_audio_shazam(video_path):
-    """FFmpeg orqali audio ajratish va Shazam bilan musiqa aniqlash"""
+    """FFmpeg va ShazamIO (Bytes ko'rinishida) musiqa aniqlash"""
     try:
         ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
         audio_sample = f"{video_path}_sample.mp3"
@@ -141,7 +158,11 @@ async def recognize_audio_shazam(video_path):
         if not os.path.exists(audio_sample) or os.path.getsize(audio_sample) == 0:
             return None, []
 
-        out = await shazam.recognize(audio_sample)
+        # Audioni bayt ko'rinishida o'qib Shazam'ga uzatamiz (Xatolikni yo'qotadi)
+        with open(audio_sample, 'rb') as f:
+            audio_bytes = f.read()
+
+        out = await shazam.recognize(audio_bytes)
 
         if os.path.exists(audio_sample):
             os.remove(audio_sample)
@@ -546,19 +567,30 @@ async def handle_user_messages(client, message):
         except:
             pass
 
-        file_path = await download_instagram_ytdlp(text, user_id)
+        media_type, file_path = await download_instagram_media(text, user_id)
 
         if file_path and os.path.exists(file_path) and os.path.getsize(file_path) > 0:
-            media_file_cache[user_id] = file_path
-            status = await client.send_message(user_id, "📤 **Video yuborilmoqda...**")
-            await client.send_video(
-                chat_id=user_id,
-                video=file_path,
-                caption=f"✅ **Video yuklab olindi!**\n🤖 Bot: {BOT_SIGNATURE}",
-                reply_markup=get_post_download_buttons(user_id),
-                progress=progress_status,
-                progress_args=(status, "📤 **Video yuborilmoqda...**")
-            )
+            status = await client.send_message(user_id, "📤 **Fayl yuborilmoqda...**")
+            
+            if media_type == "video":
+                media_file_cache[user_id] = file_path
+                await client.send_video(
+                    chat_id=user_id,
+                    video=file_path,
+                    caption=f"✅ **Video yuklab olindi!**\n🤖 Bot: {BOT_SIGNATURE}",
+                    reply_markup=get_post_download_buttons(user_id),
+                    progress=progress_status,
+                    progress_args=(status, "📤 **Video yuborilmoqda...**")
+                )
+            else:
+                await client.send_photo(
+                    chat_id=user_id,
+                    photo=file_path,
+                    caption=f"✅ **Rasm yuklab olindi!**\n🤖 Bot: {BOT_SIGNATURE}",
+                    progress=progress_status,
+                    progress_args=(status, "📤 **Rasm yuborilmoqda...**")
+                )
+
             await status.delete()
             try:
                 await hourglass_msg.delete()
@@ -569,7 +601,7 @@ async def handle_user_messages(client, message):
                 await hourglass_msg.delete()
             except:
                 pass
-            await message.reply_text("❌ Videoni yuklab bo'lmadi.")
+            await message.reply_text("❌ Media faylni yuklab bo'lmadi.")
 
     elif mode == "ai":
         status = await message.reply_text("🤔 **AI o'ylamoqda...**")
@@ -609,5 +641,5 @@ def keep_alive_ping():
 if __name__ == "__main__":
     threading.Thread(target=run_dummy_server, daemon=True).start()
     threading.Thread(target=keep_alive_ping, daemon=True).start()
-    print("🚀 Bot Shazam xotira xatolarisiz qayta ishga tushdi!")
+    print("🚀 Bot Shazam va Instagram Rasmlari to'g'rilangan holda ishga tushdi!")
     app.run()

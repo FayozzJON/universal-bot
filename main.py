@@ -1,3 +1,17 @@
+from flask import Flask
+import threading
+
+web_app = Flask(__name__)
+
+@web_app.route('/')
+def home():
+    return "Bot is running 24/7!"
+
+def run_web():
+    web_app.run(host="0.0.0.0", port=10000)
+
+threading.Thread(target=run_web, daemon=True).start()
+
 import asyncio
 
 loop = asyncio.new_event_loop()

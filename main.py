@@ -8,7 +8,6 @@ import re
 import json
 import time
 import requests
-from bs4 import BeautifulSoup
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from shazamio import Shazam
@@ -27,7 +26,6 @@ app = Client(
 BOT_SIGNATURE = "@fazaHASASHIbot"
 
 user_mode = {}
-yt_cache = {}
 media_file_cache = {}
 search_results_cache = {}
 
@@ -65,10 +63,47 @@ async def safe_delete_message(msg):
     except Exception:
         pass
 
+def download_universal_media(url, user_id):
+    """Instagram, TikTok va boshqa platformalar uchun block bo'lmaydigan yuklagich"""
+    file_path = f"video_{user_id}_{int(time.time())}.mp4"
+    try:
+        # 1-usul: Cobalt API (Instagram va TikTok uchun eng tezkor)
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json"
+        }
+        data = {"url": url}
+        res = requests.post("https://co.wuk.sh/api/json", json=data, headers=headers, timeout=12)
+        if res.status_code == 200:
+            res_json = res.json()
+            video_url = res_json.get("url")
+            if video_url:
+                v_res = requests.get(video_url, stream=True, timeout=20)
+                with open(file_path, 'wb') as f:
+                    for chunk in v_res.iter_content(chunk_size=1024*1024):
+                        if chunk:
+                            f.write(chunk)
+                return file_path
+
+        # 2-usul: zotpy API (Zaxira usul)
+        api_url = f"https://api.v2.zotpy.com/download?url={url}"
+        z_res = requests.get(api_url, timeout=12).json()
+        if z_res.get("url"):
+            v_res = requests.get(z_res["url"], stream=True, timeout=20)
+            with open(file_path, 'wb') as f:
+                for chunk in v_res.iter_content(chunk_size=1024*1024):
+                    if chunk:
+                        f.write(chunk)
+            return file_path
+    except Exception as e:
+        print("DL Error:", e)
+
+    return None
+
 async def recognize_audio_shazam(video_path):
     audio_sample = f"{video_path}_sample.mp3"
     try:
-        cmd = f'ffmpeg -y -i "{video_path}" -vn -ar 44100 -ac 2 -t 7 -f mp3 "{audio_sample}"'
+        cmd = f'ffmpeg -y -i "{video_path}" -vn -ar 44100 -ac 2 -t 8 -f mp3 "{audio_sample}"'
         proc = await asyncio.create_subprocess_shell(cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         await proc.communicate()
 
@@ -241,21 +276,17 @@ async def handle_user_messages(client, message):
     if is_social:
         hourglass_msg = await message.reply_text("⏳ **Media yuklanmoqda...**")
 
-        file_name = f"video_{user_id}_{int(time.time())}.mp4"
-
-        cmd = f'yt-dlp --referer "https://www.tiktok.com/" --user-agent "Mozilla/5.0" -o "{file_name}" "{text}"'
-        process = await asyncio.create_subprocess_shell(cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        await process.communicate()
+        file_path = await asyncio.to_thread(download_universal_media, text, user_id)
 
         await safe_delete_message(hourglass_msg)
 
-        if os.path.exists(file_name) and os.path.getsize(file_name) > 0:
-            media_file_cache[user_id] = file_name
+        if file_path and os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+            media_file_cache[user_id] = file_path
             status = await client.send_message(user_id, "📤 **Video yuborilmoqda...**")
             
             await client.send_video(
                 chat_id=user_id,
-                video=file_name,
+                video=file_path,
                 caption=f"✅ **Video yuklab olindi!**\n🤖 {BOT_SIGNATURE}",
                 reply_markup=get_post_download_buttons(user_id)
             )
@@ -264,5 +295,5 @@ async def handle_user_messages(client, message):
             await message.reply_text("❌ Videoni yuklab bo'lmadi. Havolani qayta tekshiring.")
 
 if __name__ == "__main__":
-    print("🚀 Bot ishga tushdi!")
+    print("🚀 Bot universal yuklagich bilan ishga tushdi!")
     app.run()

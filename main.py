@@ -12,7 +12,6 @@ from bs4 import BeautifulSoup
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from shazamio import Shazam
-import g4f
 
 API_ID = 38154579
 API_HASH = "48ac2ee1584e889e0c696d158db6d2c5"
@@ -32,7 +31,6 @@ user_mode = {}
 yt_cache = {}
 media_file_cache = {}
 search_results_cache = {}
-last_update = {}
 
 shazam = Shazam()
 
@@ -62,45 +60,16 @@ def get_post_download_buttons(user_id):
         ]
     ])
 
-ALL_QUALITIES = [144, 240, 360, 480, 720, 1080, 1440, 2160]
-
-def download_pinterest_media(url, user_id):
+async def safe_delete_message(msg):
     try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-        response = requests.get(url, headers=headers, allow_redirects=True, timeout=10)
-        soup = BeautifulSoup(response.content, 'html.parser')
-
-        video_tag = soup.find('video')
-        if video_tag and video_tag.get('src'):
-            video_url = video_tag['src']
-            if video_url.startswith('blob:'):
-                video_url = soup.find('source')['src'] if soup.find('source') else None
-            
-            if video_url:
-                v_res = requests.get(video_url, headers=headers, stream=True)
-                file_path = f"pin_vid_{user_id}_{int(time.time())}.mp4"
-                with open(file_path, 'wb') as f:
-                    for chunk in v_res.iter_content(chunk_size=1024*1024):
-                        if chunk:
-                            f.write(chunk)
-                return "video", file_path
-
-        og_image = soup.find("meta", property="og:image")
-        if og_image and og_image.get("content"):
-            img_url = og_image["content"]
-            i_res = requests.get(img_url, headers=headers)
-            file_path = f"pin_img_{user_id}_{int(time.time())}.jpg"
-            with open(file_path, 'wb') as f:
-                f.write(i_res.content)
-            return "photo", file_path
-    except Exception as e:
-        print("Pinterest DL Error:", e)
-    return None, None
+        await msg.delete()
+    except Exception:
+        pass
 
 async def recognize_audio_shazam(video_path):
+    audio_sample = f"{video_path}_sample.mp3"
     try:
-        audio_sample = f"{video_path}_sample.mp3"
-        cmd = f'ffmpeg -y -i "{video_path}" -vn -ar 44100 -ac 2 -t 10 -f mp3 "{audio_sample}"'
+        cmd = f'ffmpeg -y -i "{video_path}" -vn -ar 44100 -ac 2 -t 7 -f mp3 "{audio_sample}"'
         proc = await asyncio.create_subprocess_shell(cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         await proc.communicate()
 
@@ -116,16 +85,12 @@ async def recognize_audio_shazam(video_path):
         song_title = track.get('title')
         artist = track.get('subtitle')
 
-        full_song = None
-        if song_title and artist:
-            full_song = f"{artist} - {song_title}"
-        elif song_title:
-            full_song = song_title
+        full_song = f"{artist} - {song_title}" if artist and song_title else song_title
 
         if not full_song:
             return None, []
 
-        search_cmd = f'yt-dlp "ytsearch5:{full_song}" --dump-json'
+        search_cmd = f'yt-dlp "ytsearch5:{full_song}" --dump-json --flat-playlist'
         sproc = await asyncio.create_subprocess_shell(search_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         sout, _ = await sproc.communicate()
 
@@ -134,95 +99,32 @@ async def recognize_audio_shazam(video_path):
             if line.strip():
                 try:
                     item = json.loads(line)
-                    dur_sec = item.get('duration', 0)
-                    mins, secs = divmod(dur_sec, 60)
+                    dur_sec = item.get('duration', 0) or 0
+                    mins, secs = divmod(int(dur_sec), 60)
                     results.append({
                         "id": item.get('id'),
                         "title": item.get('title'),
-                        "url": item.get('webpage_url'),
+                        "url": f"https://www.youtube.com/watch?v={item.get('id')}",
                         "duration": f"{mins}:{secs:02d}"
                     })
-                except:
+                except Exception:
                     pass
 
         return full_song, results[:5]
     except Exception as e:
-        print("Shazam Recognize Error:", e)
+        print("Shazam Error:", e)
+        if os.path.exists(audio_sample):
+            os.remove(audio_sample)
         return None, []
-
-async def progress_status(current, total, status_msg, action_text):
-    now = time.time()
-    chat_id = status_msg.chat.id
-
-    if chat_id not in last_update or (now - last_update[chat_id]) >= 1.5 or current == total:
-        last_update[chat_id] = now
-        percentage = (current * 100) / total if total > 0 else 0
-        mb_current = current / (1024 * 1024)
-        mb_total = total / (1024 * 1024) if total > 0 else 0
-
-        text = f"{action_text}\n📊 **Jarayon:** {percentage:.1f}%\n💾 **Hajmi:** {mb_current:.1f} MB / {mb_total:.1f} MB"
-
-        try:
-            await status_msg.edit_text(text)
-        except Exception:
-            pass
-
-async def get_yt_info(url):
-    cmd = f'yt-dlp --dump-json "{url}"'
-    process = await asyncio.create_subprocess_shell(
-        cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE
-    )
-    stdout, _ = await process.communicate()
-    try:
-        data = json.loads(stdout.decode())
-        formats = data.get("formats", [])
-        
-        quality_sizes = {}
-        for f in formats:
-            h = f.get("height")
-            filesize = f.get("filesize") or f.get("filesize_approx")
-            if h and h in ALL_QUALITIES and filesize:
-                mb = round(filesize / (1024 * 1024), 1)
-                quality_sizes[h] = mb
-
-        available_heights = set(quality_sizes.keys())
-        if not available_heights:
-            for f in formats:
-                h = f.get("height")
-                if h and h in ALL_QUALITIES:
-                    available_heights.add(h)
-
-        max_h = max(available_heights) if available_heights else 720
-        final_qualities = [q for q in ALL_QUALITIES if q <= max_h]
-
-        audio_size = 0
-        for f in formats:
-            if f.get("vcodec") == "none" and (f.get("filesize") or f.get("filesize_approx")):
-                audio_size = round((f.get("filesize") or f.get("filesize_approx")) / (1024 * 1024), 1)
-                break
-
-        return {
-            "title": data.get("title", "YouTube Video"),
-            "thumbnail": data.get("thumbnail"),
-            "qualities": final_qualities,
-            "sizes": quality_sizes,
-            "audio_size": audio_size
-        }
-    except Exception as e:
-        print("YT Info Error:", e)
-        return None
 
 @app.on_message(filters.command("start") & filters.private)
 async def start_cmd(client, message):
     user_id = message.chat.id
     user_mode[user_id] = "default"
-    user_name = message.from_user.first_name
     await message.reply_text(
-        f"Assalomu alaykum, **{user_name}**!\n\n"
+        f"Assalomu alaykum, **{message.from_user.first_name}**!\n\n"
         f"🤖 **Universal Yordamchi Bot**ga xush kelibsiz.\n"
-        f"Kerakli bo'limni tanlash uchun quyidagi tugmalardan birini bosing:",
+        f"Kerakli bo'limni tanlang:",
         reply_markup=MAIN_MENU
     )
 
@@ -233,15 +135,15 @@ async def callback_handler(client, callback_query):
 
     try:
         await callback_query.answer()
-    except:
+    except Exception:
         pass
 
     if data == "main_menu":
         user_mode[user_id] = "default"
         try:
             await callback_query.message.edit_text("🤖 **Bosh menyu:**\nKerakli bo'limni tanlang:", reply_markup=MAIN_MENU)
-        except:
-            await callback_query.message.reply_text("🤖 **Bosh menyu:**\nKerakli bo'limni tanlang:", reply_markup=MAIN_MENU)
+        except Exception:
+            pass
 
     elif data == "menu_downloader":
         user_mode[user_id] = "downloader"
@@ -251,67 +153,55 @@ async def callback_handler(client, callback_query):
                 "Menga **Instagram, TikTok, YouTube yoki Pinterest** linkini yuboring!",
                 reply_markup=BACK_BUTTON
             )
-        except:
+        except Exception:
             pass
 
     elif data == "menu_kino":
-        user_mode[user_id] = "kino"
         try:
-            await callback_query.message.edit_text("🍿 **Kino Izlash Bo'limi**\n\n*(Ushbu bo'lim tez orada ishga tushadi)*", reply_markup=BACK_BUTTON)
-        except:
+            await callback_query.message.edit_text("🍿 **Kino Izlash Bo'limi**\n\n*(Tez orada ishga tushadi)*", reply_markup=BACK_BUTTON)
+        except Exception:
             pass
 
     elif data == "menu_ai":
         user_mode[user_id] = "ai"
         try:
-            await callback_query.message.edit_text("🧠 **AI Yordamchi (ChatGPT) Bo'limi Yoniq!**\n\nMenga savolingizni yozing:", reply_markup=BACK_BUTTON)
-        except:
+            await callback_query.message.edit_text("🧠 **AI Yordamchi Bo'limi Yoniq!**\n\nMenga savolingizni yozing:", reply_markup=BACK_BUTTON)
+        except Exception:
             pass
 
     elif data == "menu_about":
-        about_text = (
-            "ℹ️ **Bot Haqida**\n\n"
-            "Ushbu universal bot quyidagi imkoniyatlarni taqdim etadi:\n"
-            "• 🎬 **Social Downloader** — YouTube, Instagram, TikTok va Pinterest'dan video/rasm yuklash hamda musiqasini topish.\n"
-            "• 🍿 **Kino Izlash** — Tez kunda kinolar bazasi!\n"
-            "• 🧠 **AI Yordamchi** — Sun'iy intellekt orqali savollaringizga javob olish.\n\n"
-            f"Bot: {BOT_SIGNATURE}"
-        )
+        about_text = f"ℹ️ **Bot Haqida**\n\nSocial downloader, Shazam va AI bot.\n🤖 {BOT_SIGNATURE}"
         try:
             await callback_query.message.edit_text(about_text, reply_markup=BACK_BUTTON)
-        except:
+        except Exception:
             pass
 
     elif data.startswith("findmusic_"):
         video_path = media_file_cache.get(user_id)
         if not video_path or not os.path.exists(video_path):
-            await callback_query.answer("❌ Video topilmadi, havola qayta yuboring!", show_alert=True)
+            await callback_query.answer("❌ Video topilmadi, iltimos linkni qayta yuboring!", show_alert=True)
             return
 
-        hourglass_msg = await client.send_message(user_id, "⏳ Shazam orqali musiqa tahlil qilinmoqda...")
+        hourglass_msg = await client.send_message(user_id, "⏳ **Shazam orqali musiqa qidirilmoqda...**")
 
         song_name, results = await recognize_audio_shazam(video_path)
         search_results_cache[user_id] = results
+
+        await safe_delete_message(hourglass_msg)
 
         if song_name and results:
             music_text = f"🎵 **{song_name}**\n\n"
             num_buttons = []
             for idx, res in enumerate(results, 1):
-                music_text += f"**{idx}.** {res['title']} **{res['duration']}**\n"
+                music_text += f"**{idx}.** {res['title']} **({res['duration']})**\n"
                 num_buttons.append(InlineKeyboardButton(str(idx), callback_data=f"dlmusic_{idx-1}"))
 
             row_buttons = [num_buttons[i:i+5] for i in range(0, len(num_buttons), 5)]
-            row_buttons.insert(0, [InlineKeyboardButton("📁 Video", callback_data="menu_downloader")])
+            row_buttons.insert(0, [InlineKeyboardButton("📁 Video yuklash", callback_data="menu_downloader")])
 
-            music_keyboard = InlineKeyboardMarkup(row_buttons)
-            await client.send_message(user_id, music_text, reply_markup=music_keyboard)
+            await client.send_message(user_id, music_text, reply_markup=InlineKeyboardMarkup(row_buttons))
         else:
             await client.send_message(user_id, "❌ Videodagi qo'shiqni Shazam topa olmadi.")
-
-        try:
-            await hourglass_msg.delete()
-        except:
-            pass
 
     elif data.startswith("dlmusic_"):
         idx = int(data.split("_")[1])
@@ -322,7 +212,7 @@ async def callback_handler(client, callback_query):
             return
 
         selected = user_results[idx]
-        status = await client.send_message(user_id, f"⏳ **{selected['title']}** yuklanmoqda...")
+        status = await client.send_message(user_id, f"⚡ **{selected['title']}** yuklanmoqda...")
 
         out_mp3 = f"music_{user_id}_{int(time.time())}.mp3"
         cmd = f'yt-dlp -x --audio-format mp3 -o "{out_mp3}" "{selected["url"]}"'
@@ -335,225 +225,45 @@ async def callback_handler(client, callback_query):
             await client.send_audio(
                 chat_id=user_id,
                 audio=out_mp3,
-                caption=f"🎵 **{selected['title']}**\n🤖 Bot: {BOT_SIGNATURE}",
-                progress=progress_status,
-                progress_args=(status, "📤 **Audio yuborilmoqda...**")
+                caption=f"🎵 **{selected['title']}**\n🤖 {BOT_SIGNATURE}"
             )
             os.remove(out_mp3)
-            await status.delete()
+            await safe_delete_message(status)
         else:
             await status.edit_text("❌ Musiqani yuklab bo'lmadi.")
-
-    elif data.startswith("ytdl_"):
-        parts = data.split("_")
-        quality = parts[1]
-        url = yt_cache.get(user_id)
-
-        if not url:
-            await callback_query.answer("❌ Link muddati o'tdi, qayta yuboring!", show_alert=True)
-            return
-
-        try:
-            await callback_query.message.delete()
-        except:
-            pass
-
-        status = await client.send_message(user_id, f"⏳ **{quality} formatini yuklash boshlandi...**")
-        file_name = f"yt_{user_id}_{int(time.time())}"
-        
-        if quality == "mp3":
-            out_file = f"{file_name}.mp3"
-            cmd = f'yt-dlp -x --audio-format mp3 -o "{out_file}" "{url}"'
-        else:
-            out_file = f"{file_name}.mp4"
-            h = quality.replace("p", "")
-            cmd = f'yt-dlp -f "bestvideo[height<={h}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<={h}]+bestaudio/best[height<={h}]/best" --merge-output-format mp4 -o "{out_file}" "{url}"'
-
-        process = await asyncio.create_subprocess_shell(cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        await process.communicate()
-
-        if os.path.exists(out_file) and os.path.getsize(out_file) > 0:
-            await status.edit_text("📤 **Botga yuborilmoqda...**")
-            
-            if quality == "mp3":
-                await client.send_audio(
-                    chat_id=user_id,
-                    audio=out_file,
-                    caption=f"🎵 Audio yuklab olindi!\n🤖 Bot: {BOT_SIGNATURE}",
-                    progress=progress_status,
-                    progress_args=(status, "📤 **Audio yuborilmoqda...**")
-                )
-                os.remove(out_file)
-            else:
-                media_file_cache[user_id] = out_file
-                await client.send_video(
-                    chat_id=user_id,
-                    video=out_file,
-                    caption=f"🎬 Sifat: **{quality}**\n🤖 Bot: {BOT_SIGNATURE}",
-                    reply_markup=get_post_download_buttons(user_id),
-                    progress=progress_status,
-                    progress_args=(status, f"📤 **{quality} video yuborilmoqda...**")
-                )
-            await status.delete()
-        else:
-            await status.edit_text("❌ Yuklab bo'lmadi.")
 
 @app.on_message(filters.private & filters.text & ~filters.command(["start", "stop"]))
 async def handle_user_messages(client, message):
     user_id = message.chat.id
     text = message.text
-    mode = user_mode.get(user_id, "default")
 
-    is_yt = re.search(r"(youtube\.com|youtu\.be)", text)
-    is_pinterest = re.search(r"(pinterest\.com|pin\.it)", text)
-    is_other_social = re.search(r"(instagram\.com|tiktok\.com|vt\.tiktok\.com|vm\.tiktok\.com)", text)
+    is_social = re.search(r"(instagram\.com|tiktok\.com|vt\.tiktok\.com|pinterest\.com|pin\.it|youtube\.com|youtu\.be)", text)
 
-    if is_yt:
-        hourglass_msg = await message.reply_text("⏳")
-        info = await get_yt_info(text)
+    if is_social:
+        hourglass_msg = await message.reply_text("⏳ **Media yuklanmoqda...**")
 
-        try:
-            await message.delete()
-        except:
-            pass
+        file_name = f"video_{user_id}_{int(time.time())}.mp4"
 
-        if info:
-            yt_cache[user_id] = text
-            title = info["title"]
-            thumb = info["thumbnail"]
-            qualities = info["qualities"]
-            sizes = info["sizes"]
-            audio_size = info["audio_size"]
-
-            inline_keyboard = []
-            row = []
-            for q in qualities:
-                size_str = f" ~ {sizes[q]}MB" if q in sizes else ""
-                label = f"🚀 {q}p{size_str}"
-                row.append(InlineKeyboardButton(label, callback_data=f"ytdl_{q}p"))
-                if len(row) == 2:
-                    inline_keyboard.append(row)
-                    row = []
-            if row:
-                inline_keyboard.append(row)
-
-            mp3_label = f"🎵 MP3 Audiosi ~ {audio_size}MB" if audio_size else "🎵 MP3 Audiosi"
-            inline_keyboard.append([InlineKeyboardButton(mp3_label, callback_data="ytdl_mp3")])
-
-            buttons = InlineKeyboardMarkup(inline_keyboard)
-            caption = f"📹 **{title}**\n\n👇 **Yuklash uchun formatni tanlang:**"
-
-            if thumb:
-                await client.send_photo(chat_id=user_id, photo=thumb, caption=caption, reply_markup=buttons)
-            else:
-                await client.send_message(chat_id=user_id, text=caption, reply_markup=buttons)
-            
-            try:
-                await hourglass_msg.delete()
-            except:
-                pass
-        else:
-            try:
-                await hourglass_msg.delete()
-            except:
-                pass
-            await message.reply_text("❌ YouTube ma'lumotlarini olib bo'lmadi.")
-
-    elif is_pinterest:
-        hourglass_msg = await message.reply_text("⏳")
-        try:
-            await message.delete()
-        except:
-            pass
-
-        media_type, file_path = await asyncio.to_thread(download_pinterest_media, text, user_id)
-
-        if file_path and os.path.exists(file_path):
-            status = await client.send_message(user_id, "📤 **Fayl yuborilmoqda...**")
-            
-            if media_type == "video":
-                media_file_cache[user_id] = file_path
-                await client.send_video(
-                    chat_id=user_id,
-                    video=file_path,
-                    caption=f"✅ **Pinterest videosi yuklab olindi!**\n🤖 Bot: {BOT_SIGNATURE}",
-                    reply_markup=get_post_download_buttons(user_id),
-                    progress=progress_status,
-                    progress_args=(status, "📤 **Video yuborilmoqda...**")
-                )
-            else:
-                await client.send_photo(
-                    chat_id=user_id,
-                    photo=file_path,
-                    caption=f"✅ **Pinterest rasmi yuklab olindi!**\n🤖 Bot: {BOT_SIGNATURE}",
-                    progress=progress_status,
-                    progress_args=(status, "📤 **Rasm yuborilmoqda...**")
-                )
-                os.remove(file_path)
-
-            await status.delete()
-            try:
-                await hourglass_msg.delete()
-            except:
-                pass
-        else:
-            try:
-                await hourglass_msg.delete()
-            except:
-                pass
-            await client.send_message(user_id, "❌ Pinterest faylini yuklab bo'lmadi.")
-
-    elif is_other_social:
-        hourglass_msg = await message.reply_text("⏳")
-        try:
-            await message.delete()
-        except:
-            pass
-
-        file_name = f"social_{user_id}_{int(time.time())}.mp4"
-
-        cmd = f'yt-dlp --referer "https://www.tiktok.com/" --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" -o "{file_name}" "{text}"'
+        cmd = f'yt-dlp --referer "https://www.tiktok.com/" --user-agent "Mozilla/5.0" -o "{file_name}" "{text}"'
         process = await asyncio.create_subprocess_shell(cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         await process.communicate()
+
+        await safe_delete_message(hourglass_msg)
 
         if os.path.exists(file_name) and os.path.getsize(file_name) > 0:
             media_file_cache[user_id] = file_name
             status = await client.send_message(user_id, "📤 **Video yuborilmoqda...**")
+            
             await client.send_video(
                 chat_id=user_id,
                 video=file_name,
-                caption=f"✅ **Video yuklab olindi!**\n🤖 Bot: {BOT_SIGNATURE}",
-                reply_markup=get_post_download_buttons(user_id),
-                progress=progress_status,
-                progress_args=(status, "📤 **Video yuborilmoqda...**")
+                caption=f"✅ **Video yuklab olindi!**\n🤖 {BOT_SIGNATURE}",
+                reply_markup=get_post_download_buttons(user_id)
             )
-            await status.delete()
-            try:
-                await hourglass_msg.delete()
-            except:
-                pass
+            await safe_delete_message(status)
         else:
-            try:
-                await hourglass_msg.delete()
-            except:
-                pass
-            await client.send_message(user_id, "❌ Videoni yuklab bo'lmadi. Linkni qayta tekshiring.")
-
-    elif mode == "ai":
-        status = await message.reply_text("🤔 **AI o'ylamoqda...**")
-        try:
-            response = await asyncio.to_thread(
-                g4f.ChatCompletion.create,
-                model=g4f.models.gpt_4,
-                messages=[{"role": "user", "content": text}]
-            )
-            await status.edit_text(f"🧠 **AI Javobi:**\n\n{response}\n\n🤖 {BOT_SIGNATURE}", reply_markup=BACK_BUTTON)
-        except Exception as e:
-            await status.edit_text(f"❌ Xatolik: {str(e)}", reply_markup=BACK_BUTTON)
-
-    else:
-        pass
+            await message.reply_text("❌ Videoni yuklab bo'lmadi. Havolani qayta tekshiring.")
 
 if __name__ == "__main__":
-    print("🚀 Bot rasmiy va bepul Shazam API bilan ishga tushdi!")
+    print("🚀 Bot ishga tushdi!")
     app.run()

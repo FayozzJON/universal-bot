@@ -63,40 +63,59 @@ def get_post_download_buttons(user_id):
 
 ALL_QUALITIES = [144, 240, 360, 480, 720, 1080, 1440, 2160]
 
-def download_instagram_fast(url, user_id):
-    """Instagram videolarni blokirovkalarsiz API orqali yuklab olish"""
+def download_instagram_fast(raw_url, user_id):
+    """Instagram va TikTok videolarni tozalangan havola va 3 xil zaxira API orqali yuklash"""
+    # URL oxiridagi ?igsh=... kabi ortiqcha belgilarni tozalaymiz
+    clean_url = raw_url.split("?")[0].strip()
     file_path = f"insta_{user_id}_{int(time.time())}.mp4"
-    try:
-        api_url = f"https://api.v2.zotpy.com/download?url={url}"
-        res = requests.get(api_url, timeout=12)
-        if res.status_code == 200:
-            data = res.json()
-            video_url = data.get("url") or data.get("video_url")
-            if video_url:
-                v_res = requests.get(video_url, stream=True, timeout=25)
-                with open(file_path, 'wb') as f:
-                    for chunk in v_res.iter_content(chunk_size=1024*1024):
-                        if chunk:
-                            f.write(chunk)
-                return file_path
-    except Exception as e:
-        print("Instagram API Error:", e)
 
-    # Zaxira usuli (Cobalt)
+    # 1-USUL: Cobalt API
     try:
-        headers = {"Accept": "application/json", "Content-Type": "application/json"}
-        res2 = requests.post("https://co.wuk.sh/api/json", json={"url": url}, headers=headers, timeout=12)
-        if res2.status_code == 200:
-            v_url = res2.json().get("url")
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+        res = requests.post("https://api.cobalt.tools/api/json", json={"url": clean_url}, headers=headers, timeout=12)
+        if res.status_code == 200:
+            v_url = res.json().get("url")
             if v_url:
                 v_res = requests.get(v_url, stream=True, timeout=25)
                 with open(file_path, 'wb') as f:
                     for chunk in v_res.iter_content(chunk_size=1024*1024):
                         if chunk:
                             f.write(chunk)
-                return file_path
+                if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+                    return file_path
     except Exception as e:
         print("Cobalt API Error:", e)
+
+    # 2-USUL: Zotpy API
+    try:
+        api_url = f"https://api.v2.zotpy.com/download?url={clean_url}"
+        res2 = requests.get(api_url, timeout=12)
+        if res2.status_code == 200:
+            data = res2.json()
+            v_url = data.get("url") or data.get("video_url")
+            if v_url:
+                v_res = requests.get(v_url, stream=True, timeout=25)
+                with open(file_path, 'wb') as f:
+                    for chunk in v_res.iter_content(chunk_size=1024*1024):
+                        if chunk:
+                            f.write(chunk)
+                if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+                    return file_path
+    except Exception as e:
+        print("Zotpy API Error:", e)
+
+    # 3-USUL: yt-dlp (Tozalangan havola bilan)
+    try:
+        cmd = f'yt-dlp --no-check-certificate --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" -o "{file_path}" "{clean_url}"'
+        os.system(cmd)
+        if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+            return file_path
+    except Exception as e:
+        print("yt-dlp Error:", e)
 
     return None
 
@@ -509,22 +528,3 @@ async def handle_user_messages(client, message):
             
             if media_type == "video":
                 media_file_cache[user_id] = file_path
-                await client.send_video(
-                    chat_id=user_id,
-                    video=file_path,
-                    caption=f"✅ **Pinterest videosi yuklab olindi!**\n🤖 Bot: {BOT_SIGNATURE}",
-                    reply_markup=get_post_download_buttons(user_id),
-                    progress=progress_status,
-                    progress_args=(status, "📤 **Video yuborilmoqda...**")
-                )
-            else:
-                await client.send_photo(
-                    chat_id=user_id,
-                    photo=file_path,
-                    caption=f"✅ **Pinterest rasmi yuklab olindi!**\n🤖 Bot: {BOT_SIGNATURE}",
-                    progress=progress_status,
-                    progress_args=(status, "📤 **Rasm yuborilmoqda...**")
-                )
-                os.remove(file_path)
-
-            

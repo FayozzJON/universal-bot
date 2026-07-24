@@ -1,9 +1,8 @@
 pyrogram
 tgcrypto
+shazamio==0.8.1
+yt-dlp>=2026.07.01
+imageio-ffmpeg
 requests
 beautifulsoup4
-yt-dlp
 g4f
-shazamio
-pydantic
-imageio-ffmpeg

@@ -65,62 +65,20 @@ def get_post_download_buttons(user_id):
 
 ALL_QUALITIES = [144, 240, 360, 480, 720, 1080, 1440, 2160]
 
-def download_instagram_cobalt(raw_url, user_id):
-    """Cobalt Engine orqali Instagram/TikTok kontentlarini ishonchli yuklash"""
+def download_instagram_fast(raw_url, user_id):
+    """Instagram videolarni tezkor API orqali yuklab olish"""
     clean_url = raw_url.split("?")[0].strip()
     file_path = f"insta_{user_id}_{int(time.time())}.mp4"
 
-    # Cobalt API Instances
-    cobalt_instances = [
-        "https://co.wuk.sh/api/json",
-        "https://api.cobalt.tools/api/json",
-        "https://cobalt.q13.re/api/json"
-    ]
-
-    headers = {
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-    }
-
-    payload = {
-        "url": clean_url,
-        "vQuality": "720"
-    }
-
-    for instance in cobalt_instances:
-        try:
-            res = requests.post(instance, json=payload, headers=headers, timeout=12)
-            if res.status_code == 200:
-                data = res.json()
-                media_url = data.get("url")
-                
-                # Agar karusel bo'lsa (picker)
-                if not media_url and data.get("picker"):
-                    picker = data.get("picker", [])
-                    if len(picker) > 0:
-                        media_url = picker[0].get("url")
-
-                if media_url:
-                    v_res = requests.get(media_url, stream=True, timeout=25)
-                    with open(file_path, 'wb') as f:
-                        for chunk in v_res.iter_content(chunk_size=1024*1024):
-                            if chunk:
-                                f.write(chunk)
-                    if os.path.exists(file_path) and os.path.getsize(file_path) > 5000:
-                        return file_path
-        except Exception as e:
-            print(f"Cobalt {instance} Error:", e)
-
-    # Backup Direct Scraper
+    # 1-USUL: Fast Open API Engine
     try:
-        sf_url = f"https://worker.sf-api.com/service-fast-download/get?url={clean_url}"
-        sf_res = requests.get(sf_url, timeout=10)
-        if sf_res.status_code == 200:
-            sf_json = sf_res.json()
-            if sf_json.get("url"):
-                media_link = sf_json["url"][0]["url"]
-                v_res = requests.get(media_link, stream=True, timeout=25)
+        api_url = f"https://api.v2.zotpy.com/download?url={clean_url}"
+        res = requests.get(api_url, timeout=15)
+        if res.status_code == 200:
+            data = res.json()
+            video_url = data.get("url") or data.get("video_url")
+            if video_url:
+                v_res = requests.get(video_url, stream=True, timeout=30)
                 with open(file_path, 'wb') as f:
                     for chunk in v_res.iter_content(chunk_size=1024*1024):
                         if chunk:
@@ -128,7 +86,24 @@ def download_instagram_cobalt(raw_url, user_id):
                 if os.path.exists(file_path) and os.path.getsize(file_path) > 5000:
                     return file_path
     except Exception as e:
-        print("Backup Scraper Error:", e)
+        print("Zotpy API Error:", e)
+
+    # 2-USUL: Cobalt Mirror Engine
+    try:
+        headers = {"Accept": "application/json", "Content-Type": "application/json"}
+        res2 = requests.post("https://co.wuk.sh/api/json", json={"url": clean_url}, headers=headers, timeout=15)
+        if res2.status_code == 200:
+            v_url = res2.json().get("url")
+            if v_url:
+                v_res = requests.get(v_url, stream=True, timeout=30)
+                with open(file_path, 'wb') as f:
+                    for chunk in v_res.iter_content(chunk_size=1024*1024):
+                        if chunk:
+                            f.write(chunk)
+                if os.path.exists(file_path) and os.path.getsize(file_path) > 5000:
+                    return file_path
+    except Exception as e:
+        print("Cobalt API Error:", e)
 
     return None
 
@@ -578,7 +553,7 @@ async def handle_user_messages(client, message):
         except:
             pass
 
-        file_path = await asyncio.to_thread(download_instagram_cobalt, text, user_id)
+        file_path = await asyncio.to_thread(download_instagram_fast, text, user_id)
 
         if file_path and os.path.exists(file_path) and os.path.getsize(file_path) > 0:
             media_file_cache[user_id] = file_path
@@ -618,18 +593,30 @@ async def handle_user_messages(client, message):
     else:
         pass
 
+# Render port ochuvchi va serverni doimiy uyg'oq tutuvchi qism:
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Bot Cobalt Engine bilan 24/7 ishlamoqda!")
+        self.wfile.write(b"Bot Render'da 24/7 uyg'oq va ishlamoqda!")
 
 def run_dummy_server():
     port = int(os.environ.get("PORT", 8080))
     server = HTTPServer(('0.0.0.0', port), SimpleHTTPRequestHandler)
     server.serve_forever()
 
+def keep_alive_ping():
+    """Server uqlab qolmasligi uchun har 4 daqiqada o'ziga ping yuboradi"""
+    render_url = "https://universal-bot-1-qhpd.onrender.com"
+    while True:
+        try:
+            time.sleep(240)
+            requests.get(render_url, timeout=10)
+        except Exception:
+            pass
+
 if __name__ == "__main__":
     threading.Thread(target=run_dummy_server, daemon=True).start()
-    print("🚀 Bot Cobalt Engine bilan ishga tushdi!")
+    threading.Thread(target=keep_alive_ping, daemon=True).start()
+    print("🚀 Bot Keep-Alive (Uyg'oq tutuvchi) tizimi bilan ishga tushdi!")
     app.run()

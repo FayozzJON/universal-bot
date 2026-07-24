@@ -37,9 +37,6 @@ last_update = {}
 
 shazam = Shazam()
 
-# RapidAPI Kalitingiz
-RAPID_KEY = "26dd2049a8msh710c3fd6a3de040p15d588jsnbfd3a48b3910"
-
 MAIN_MENU = InlineKeyboardMarkup([
     [
         InlineKeyboardButton("🎬 Social Downloader", callback_data="menu_downloader"),
@@ -68,52 +65,36 @@ def get_post_download_buttons(user_id):
 
 ALL_QUALITIES = [144, 240, 360, 480, 720, 1080, 1440, 2160]
 
-def download_instagram_multi_api(raw_url, user_id):
-    """Instagram Cloud Block’ni aylanib o'tuvchi ko'p bosqichli API yuklagich"""
+def download_instagram_vxtagram(raw_url, user_id):
+    """VxTagram va Cobalt ochiq bepul API orqali Instagram yuklash"""
     clean_url = raw_url.split("?")[0].strip()
     file_path = f"insta_{user_id}_{int(time.time())}.mp4"
 
-    # 1-USUL: RapidAPI - Instagram Downloader V2
+    # 1-USUL: VxTagram Open API Engine (Telegram uchun bepul ochiq API)
     try:
-        url = "https://instagram-downloader-v2.p.rapidapi.com/media"
-        headers = {
-            "x-rapidapi-key": RAPID_KEY,
-            "x-rapidapi-host": "instagram-downloader-v2.p.rapidapi.com"
-        }
-        res = requests.get(url, headers=headers, params={"url": clean_url}, timeout=15)
-        if res.status_code == 200:
-            data = res.json()
-            media_url = None
-            if isinstance(data, dict):
-                media_url = data.get("url") or data.get("media") or data.get("download_url")
-                if not media_url and "data" in data:
-                    media_url = data["data"].get("url") or data["data"].get("media")
-            if media_url:
-                v_res = requests.get(media_url, stream=True, timeout=25)
-                with open(file_path, 'wb') as f:
-                    for chunk in v_res.iter_content(chunk_size=1024*1024):
-                        if chunk:
-                            f.write(chunk)
-                if os.path.exists(file_path) and os.path.getsize(file_path) > 5000:
-                    return file_path
-    except Exception as e:
-        print("RapidAPI V2 Error:", e)
+        match = re.search(r'/(?:p|reel|reels)/([A-Za-z0-9_-]+)', clean_url)
+        if match:
+            shortcode = match.group(1)
+            vxt_url = f"https://api.vxtagram.com/post/{shortcode}"
+            res = requests.get(vxt_url, timeout=12)
+            if res.status_code == 200:
+                data = res.json()
+                media_list = data.get("media_list", []) or data.get("media_urls", [])
+                video_url = None
+                
+                for m in media_list:
+                    if isinstance(m, dict) and m.get("type") == "video":
+                        video_url = m.get("url")
+                        break
+                    elif isinstance(m, str) and (".mp4" in m or "video" in m):
+                        video_url = m
+                        break
+                
+                if not video_url and data.get("url") and (".mp4" in data.get("url") or "cdn" in data.get("url")):
+                    video_url = data.get("url")
 
-    # 2-USUL: Social Media Saver API
-    try:
-        url = "https://social-media-video-downloader.p.rapidapi.com/smvd/get/instagram"
-        headers = {
-            "x-rapidapi-key": RAPID_KEY,
-            "x-rapidapi-host": "social-media-video-downloader.p.rapidapi.com"
-        }
-        res = requests.get(url, headers=headers, params={"url": clean_url}, timeout=15)
-        if res.status_code == 200:
-            data = res.json()
-            links = data.get("links", [])
-            if links:
-                media_url = links[0].get("link")
-                if media_url:
-                    v_res = requests.get(media_url, stream=True, timeout=25)
+                if video_url:
+                    v_res = requests.get(video_url, stream=True, timeout=25)
                     with open(file_path, 'wb') as f:
                         for chunk in v_res.iter_content(chunk_size=1024*1024):
                             if chunk:
@@ -121,25 +102,34 @@ def download_instagram_multi_api(raw_url, user_id):
                     if os.path.exists(file_path) and os.path.getsize(file_path) > 5000:
                         return file_path
     except Exception as e:
-        print("RapidAPI SMVD Error:", e)
+        print("VxTagram Error:", e)
 
-    # 3-USUL: SaveFrom Fast Engine
-    try:
-        sf_url = f"https://worker.sf-api.com/service-fast-download/get?url={clean_url}"
-        sf_res = requests.get(sf_url, timeout=12)
-        if sf_res.status_code == 200:
-            sf_json = sf_res.json()
-            if sf_json.get("url"):
-                media_link = sf_json["url"][0]["url"]
-                v_res = requests.get(media_link, stream=True, timeout=25)
-                with open(file_path, 'wb') as f:
-                    for chunk in v_res.iter_content(chunk_size=1024*1024):
-                        if chunk:
-                            f.write(chunk)
-                if os.path.exists(file_path) and os.path.getsize(file_path) > 5000:
-                    return file_path
-    except Exception as e:
-        print("SaveFrom Engine Error:", e)
+    # 2-USUL: Cobalt Public Mirror Engine
+    cobalt_nodes = [
+        "https://co.wuk.sh/api/json",
+        "https://api.cobalt.tools/api/json",
+        "https://cobalt.q13.re/api/json"
+    ]
+    for node in cobalt_nodes:
+        try:
+            res = requests.post(
+                node,
+                json={"url": clean_url},
+                headers={"Accept": "application/json", "Content-Type": "application/json"},
+                timeout=10
+            )
+            if res.status_code == 200:
+                v_url = res.json().get("url")
+                if v_url:
+                    v_res = requests.get(v_url, stream=True, timeout=25)
+                    with open(file_path, 'wb') as f:
+                        for chunk in v_res.iter_content(chunk_size=1024*1024):
+                            if chunk:
+                                f.write(chunk)
+                    if os.path.exists(file_path) and os.path.getsize(file_path) > 5000:
+                        return file_path
+        except Exception as e:
+            print(f"Cobalt {node} Error:", e)
 
     return None
 
@@ -589,7 +579,7 @@ async def handle_user_messages(client, message):
         except:
             pass
 
-        file_path = await asyncio.to_thread(download_instagram_multi_api, text, user_id)
+        file_path = await asyncio.to_thread(download_instagram_vxtagram, text, user_id)
 
         if file_path and os.path.exists(file_path) and os.path.getsize(file_path) > 0:
             media_file_cache[user_id] = file_path
@@ -633,7 +623,7 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Bot Multi-API bilan 24/7 ishlamoqda!")
+        self.wfile.write(b"Bot VxTagram Engine bilan 24/7 ishlamoqda!")
 
 def run_dummy_server():
     port = int(os.environ.get("PORT", 8080))
@@ -652,5 +642,5 @@ def keep_alive_ping():
 if __name__ == "__main__":
     threading.Thread(target=run_dummy_server, daemon=True).start()
     threading.Thread(target=keep_alive_ping, daemon=True).start()
-    print("🚀 Bot ko'p bosqichli RapidAPI bloksiz tizimi bilan ishga tushdi!")
+    print("🚀 Bot VxTagram Ochiq API bilan ishga tushdi!")
     app.run()

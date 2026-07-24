@@ -21,8 +21,7 @@ app = Client(
     "universal_bot",
     api_id=API_ID,
     api_hash=API_HASH,
-    bot_token=BOT_TOKEN,
-    drop_pending_updates=True
+    bot_token=BOT_TOKEN
 )
 
 BOT_SIGNATURE = "@fazaHASASHIbot"

@@ -9,6 +9,7 @@ import json
 import time
 import requests
 import threading
+import imageio_ffmpeg
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from bs4 import BeautifulSoup
 from pyrogram import Client, filters
@@ -34,7 +35,7 @@ yt_cache = {}
 media_file_cache = {}
 search_results_cache = {}
 last_update = {}
-processed_messages = {}  # Takroriy xabarlarni ushlab qoluvchi xotira
+processed_messages = {}
 
 shazam = Shazam()
 
@@ -67,7 +68,7 @@ def get_post_download_buttons(user_id):
 ALL_QUALITIES = [144, 240, 360, 480, 720, 1080, 1440, 2160]
 
 async def download_instagram_ytdlp(raw_url, user_id):
-    """Instagram videolarni yt-dlp injini orqali muvaffaqiyatli yuklash"""
+    """Instagram videolarni yt-dlp injini orqali yuklash"""
     clean_url = raw_url.split("?")[0].strip()
     file_path = f"insta_{user_id}_{int(time.time())}.mp4"
 
@@ -117,9 +118,12 @@ def download_pinterest_media(url, user_id):
     return None, None
 
 async def recognize_audio_shazam(video_path):
+    """Render uchun ffmpeg o'rnatilgan holda Shazam orqali musiqa topish"""
     try:
+        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
         audio_sample = f"{video_path}_sample.mp3"
-        cmd = f'ffmpeg -y -i "{video_path}" -vn -ar 44100 -ac 2 -t 10 -f mp3 "{audio_sample}"'
+        
+        cmd = f'"{ffmpeg_exe}" -y -i "{video_path}" -vn -ar 44100 -ac 2 -t 10 -f mp3 "{audio_sample}"'
         proc = await asyncio.create_subprocess_shell(cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         await proc.communicate()
 
@@ -420,11 +424,9 @@ async def callback_handler(client, callback_query):
 @app.on_message(filters.private & filters.text & ~filters.command(["start", "stop"]))
 async def handle_user_messages(client, message):
     user_id = message.chat.id
-    msg_id = message.id
     text = message.text
     mode = user_mode.get(user_id, "default")
 
-    # Takroriy so'rovlarni bloklash (Deduplication)
     current_time = time.time()
     if user_id in processed_messages and (current_time - processed_messages[user_id]) < 5:
         return
@@ -554,8 +556,6 @@ async def handle_user_messages(client, message):
                 await hourglass_msg.delete()
             except:
                 pass
-            if os.path.exists(file_path):
-                os.remove(file_path)
         else:
             try:
                 await hourglass_msg.delete()
@@ -582,7 +582,7 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Bot yt-dlp injini bilan 24/7 ishlamoqda!")
+        self.wfile.write(b"Bot 24/7 ishlamoqda!")
 
 def run_dummy_server():
     port = int(os.environ.get("PORT", 8080))
@@ -601,5 +601,5 @@ def keep_alive_ping():
 if __name__ == "__main__":
     threading.Thread(target=run_dummy_server, daemon=True).start()
     threading.Thread(target=keep_alive_ping, daemon=True).start()
-    print("🚀 Bot takroriy so'rovlar filtriga ega holda ishga tushdi!")
+    print("🚀 Bot Shazam FFmpeg integratsiyasi bilan ishga tushdi!")
     app.run()

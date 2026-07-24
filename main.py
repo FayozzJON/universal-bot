@@ -77,7 +77,7 @@ def cleanup_old_file(user_id):
             pass
 
 async def download_instagram_ytdlp(raw_url, user_id):
-    """Instagram videolarni yt-dlp injini orqali yuklash"""
+    """Instagram videolarni yt-dlp orqali yuklash"""
     cleanup_old_file(user_id)
     clean_url = raw_url.split("?")[0].strip()
     file_path = f"insta_{user_id}_{int(time.time())}.mp4"
@@ -420,7 +420,7 @@ async def callback_handler(client, callback_query):
                 media_file_cache[user_id] = out_file
                 await client.send_video(
                     chat_id=user_id,
-                    video=file_name,
+                    video=out_file,
                     caption=f"🎬 Sifat: **{quality}**\n🤖 Bot: {BOT_SIGNATURE}",
                     reply_markup=get_post_download_buttons(user_id),
                     progress=progress_status,

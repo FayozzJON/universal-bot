@@ -76,56 +76,55 @@ def cleanup_old_file(user_id):
             pass
 
 async def download_instagram_media(raw_url, user_id):
-    """Instagram video va rasmlarini tezkor va asl HD sifatda yuklash"""
+    """Instagram post (rasm) va video/reels larini asl HD formatda yuklash"""
     cleanup_old_file(user_id)
     clean_url = raw_url.split("?")[0].strip()
     base_path = f"insta_{user_id}_{int(time.time())}"
 
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1'
-    }
-
-    # 1. Instagram API orqali asl HD Media ma'lumotlarini tezkor olish
+    # 1. yt-dlp orqali universal va sifatli yuklash
     try:
-        json_url = clean_url.rstrip('/') + '/?__a=1&__d=dis'
-        response = await asyncio.to_thread(requests.get, json_url, headers=headers, timeout=5)
-        
-        if response.status_code == 200:
-            data = response.json()
-            items = data.get('items', [{}])[0]
-
-            # Video bo'lsa
-            video_versions = items.get('video_versions', [])
-            if video_versions:
-                hd_video_url = video_versions[0].get('url')
-                v_res = await asyncio.to_thread(requests.get, hd_video_url, headers=headers)
-                v_path = f"{base_path}.mp4"
-                with open(v_path, 'wb') as f:
-                    f.write(v_res.content)
-                return "video", v_path
-
-            # Rasm bo'lsa (Eng yuqori HD sifatlisi)
-            image_versions = items.get('image_versions2', {}).get('candidates', [])
-            if image_versions:
-                hd_img_url = image_versions[0].get('url')
-                i_res = await asyncio.to_thread(requests.get, hd_img_url, headers=headers)
-                i_path = f"{base_path}.jpg"
-                with open(i_path, 'wb') as f:
-                    f.write(i_res.content)
-                return "photo", i_path
-    except Exception as e:
-        print("Instagram Fast API Error:", e)
-
-    # 2. Zaxira usul: yt-dlp orqali tezkor video yuklash
-    try:
-        cmd = f'yt-dlp --no-warnings --format "mp4/best" -o "{base_path}.mp4" "{clean_url}"'
+        cmd = f'yt-dlp --no-warnings --write-thumbnail --no-clean-pages -o "{base_path}.%(ext)s" "{clean_url}"'
         proc = await asyncio.create_subprocess_shell(cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         await proc.communicate()
 
-        if os.path.exists(f"{base_path}.mp4") and os.path.getsize(f"{base_path}.mp4") > 5000:
-            return "video", f"{base_path}.mp4"
+        # Video bo'lsa
+        for ext in ["mp4", "mkv", "webm"]:
+            v_file = f"{base_path}.{ext}"
+            if os.path.exists(v_file) and os.path.getsize(v_file) > 5000:
+                return "video", v_file
+
+        # Rasm bo'lsa
+        for ext in ["jpg", "png", "webp"]:
+            i_file = f"{base_path}.{ext}"
+            if os.path.exists(i_file) and os.path.getsize(i_file) > 1000:
+                return "photo", i_file
     except Exception as e:
-        print("yt-dlp Inst Fallback Error:", e)
+        print("yt-dlp Inst DL Error:", e)
+
+    # 2. Zaxira: Ochiq API orqali HD rasmlarni va videolarni olish
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+        api_req = await asyncio.to_thread(
+            requests.post,
+            "https://co.wuk.sh/api/json",
+            json={"url": clean_url},
+            headers={"Accept": "application/json", "Content-Type": "application/json"},
+            timeout=10
+        )
+        if api_req.status_code == 200:
+            res_json = api_req.json()
+            dl_url = res_json.get("url")
+            if dl_url:
+                media_res = await asyncio.to_thread(requests.get, dl_url, headers=headers)
+                ext = "mp4" if res_json.get("type") == "video" else "jpg"
+                out_path = f"{base_path}_cobalt.{ext}"
+                with open(out_path, "wb") as f:
+                    f.write(media_res.content)
+                return ("video" if ext == "mp4" else "photo"), out_path
+    except Exception as e:
+        print("Cobalt API Inst Fallback Error:", e)
 
     return None, None
 
@@ -164,22 +163,21 @@ def download_pinterest_media(url, user_id):
     return None, None
 
 async def recognize_audio_shazam(video_path):
-    """FFmpeg va ShazamIO (Bytes ko'rinishida) musiqa aniqlash"""
+    """FFmpeg orqali audioni 15 soniya ajratib, Shazam bilan musiqa topish"""
     try:
         ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
         audio_sample = f"{video_path}_sample.mp3"
         
-        cmd = f'"{ffmpeg_exe}" -y -i "{video_path}" -vn -ar 44100 -ac 2 -t 12 -f mp3 "{audio_sample}"'
+        # Audio namunani aniq formatda qirqib olish
+        cmd = f'"{ffmpeg_exe}" -y -i "{video_path}" -vn -ar 44100 -ac 1 -t 15 -f mp3 "{audio_sample}"'
         proc = await asyncio.create_subprocess_shell(cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         await proc.communicate()
 
-        if not os.path.exists(audio_sample) or os.path.getsize(audio_sample) == 0:
+        if not os.path.exists(audio_sample) or os.path.getsize(audio_sample) < 1000:
             return None, []
 
-        with open(audio_sample, 'rb') as f:
-            audio_bytes = f.read()
-
-        out = await shazam.recognize(audio_bytes)
+        # Shazam tahlili
+        out = await shazam.recognize(audio_sample)
 
         if os.path.exists(audio_sample):
             os.remove(audio_sample)
@@ -639,7 +637,7 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Bot Shazam va Tezkor HD Media bilan 24/7 ishlamoqda!")
+        self.wfile.write(b"Bot Shazam va Barcha Instagram Postlari bilan 24/7 ishlamoqda!")
 
 def run_dummy_server():
     port = int(os.environ.get("PORT", 8080))
@@ -658,5 +656,5 @@ def keep_alive_ping():
 if __name__ == "__main__":
     threading.Thread(target=run_dummy_server, daemon=True).start()
     threading.Thread(target=keep_alive_ping, daemon=True).start()
-    print("🚀 Bot Instagram tezkor API va HD rasmlar bilan yoqildi!")
+    print("🚀 Bot Instagram Postlari va Shazam bilan muvaffaqiyatli ishga tushdi!")
     app.run()

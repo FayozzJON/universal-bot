@@ -11,6 +11,7 @@ import requests
 from bs4 import BeautifulSoup
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from shazamio import Shazam
 import g4f
 
 API_ID = 38154579
@@ -32,6 +33,8 @@ yt_cache = {}
 media_file_cache = {}
 search_results_cache = {}
 last_update = {}
+
+shazam = Shazam()
 
 MAIN_MENU = InlineKeyboardMarkup([
     [
@@ -94,39 +97,37 @@ def download_pinterest_media(url, user_id):
         print("Pinterest DL Error:", e)
     return None, None
 
-async def recognize_audio_direct(video_path):
+async def recognize_audio_shazam(video_path):
+    """100% BEPUL VA CHEKSIZ SHAZAM API"""
     try:
         audio_sample = f"{video_path}_sample.mp3"
-        cmd = f'ffmpeg -y -ss 3 -i "{video_path}" -vn -ar 44100 -ac 2 -t 15 -f mp3 "{audio_sample}"'
+        # 5 sekundlik juda qisqa videolarni ham muammosiz qamrab oladi
+        cmd = f'ffmpeg -y -i "{video_path}" -vn -ar 44100 -ac 2 -t 10 -f mp3 "{audio_sample}"'
         proc = await asyncio.create_subprocess_shell(cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         await proc.communicate()
 
         if not os.path.exists(audio_sample) or os.path.getsize(audio_sample) == 0:
-            print("❌ Audio sample yaratilmadi.")
             return None, []
 
-        print(f"📁 Audio sample hajmi: {os.path.getsize(audio_sample)} bayt")
-
-        with open(audio_sample, 'rb') as f:
-            files = {'file': f}
-            res = requests.post("https://api.audd.io/", data={'api_token': 'test'}, files=files)
-            res_json = res.json()
-            print("🎵 AUDD RESPONSE:", res_json)
+        out = await shazam.recognize(audio_sample)
 
         if os.path.exists(audio_sample):
             os.remove(audio_sample)
 
-        song_title = None
-        if res_json.get('status') == 'success' and res_json.get('result'):
-            result = res_json['result']
-            artist = result.get('artist', '')
-            title = result.get('title', '')
-            song_title = f"{artist} - {title}"
+        track = out.get('track', {})
+        song_title = track.get('title')
+        artist = track.get('subtitle')
 
-        if not song_title:
+        full_song = None
+        if song_title and artist:
+            full_song = f"{artist} - {song_title}"
+        elif song_title:
+            full_song = song_title
+
+        if not full_song:
             return None, []
 
-        search_cmd = f'yt-dlp "ytsearch5:{song_title}" --dump-json'
+        search_cmd = f'yt-dlp "ytsearch5:{full_song}" --dump-json'
         sproc = await asyncio.create_subprocess_shell(search_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         sout, _ = await sproc.communicate()
 
@@ -146,9 +147,9 @@ async def recognize_audio_direct(video_path):
                 except:
                     pass
 
-        return song_title, results[:5]
+        return full_song, results[:5]
     except Exception as e:
-        print("Recognize Error:", e)
+        print("Shazam Recognize Error:", e)
         return None, []
 
 async def progress_status(current, total, status_msg, action_text):
@@ -289,9 +290,9 @@ async def callback_handler(client, callback_query):
             await callback_query.answer("❌ Video topilmadi, havola qayta yuboring!", show_alert=True)
             return
 
-        hourglass_msg = await client.send_message(user_id, "⏳ Musiqa tahlil qilinmoqda...")
+        hourglass_msg = await client.send_message(user_id, "⏳ Shazam orqali musiqa tahlil qilinmoqda...")
 
-        song_name, results = await recognize_audio_direct(video_path)
+        song_name, results = await recognize_audio_shazam(video_path)
         search_results_cache[user_id] = results
 
         if song_name and results:
@@ -307,7 +308,7 @@ async def callback_handler(client, callback_query):
             music_keyboard = InlineKeyboardMarkup(row_buttons)
             await client.send_message(user_id, music_text, reply_markup=music_keyboard)
         else:
-            await client.send_message(user_id, "❌ Videodagi qo'shiqni aniqlab bo'lmadi.")
+            await client.send_message(user_id, "❌ Videodagi qo'shiqni Shazam topa olmadi.")
 
         try:
             await hourglass_msg.delete()
@@ -526,35 +527,4 @@ async def handle_user_messages(client, message):
                 caption=f"✅ **Video yuklab olindi!**\n🤖 Bot: {BOT_SIGNATURE}",
                 reply_markup=get_post_download_buttons(user_id),
                 progress=progress_status,
-                progress_args=(status, "📤 **Video yuborilmoqda...**")
-            )
-            await status.delete()
-            try:
-                await hourglass_msg.delete()
-            except:
-                pass
-        else:
-            try:
-                await hourglass_msg.delete()
-            except:
-                pass
-            await client.send_message(user_id, "❌ Videoni yuklab bo'lmadi. Linkni qayta tekshiring.")
-
-    elif mode == "ai":
-        status = await message.reply_text("🤔 **AI o'ylamoqda...**")
-        try:
-            response = await asyncio.to_thread(
-                g4f.ChatCompletion.create,
-                model=g4f.models.gpt_4,
-                messages=[{"role": "user", "content": text}]
-            )
-            await status.edit_text(f"🧠 **AI Javobi:**\n\n{response}\n\n🤖 {BOT_SIGNATURE}", reply_markup=BACK_BUTTON)
-        except Exception as e:
-            await status.edit_text(f"❌ Xatolik: {str(e)}", reply_markup=BACK_BUTTON)
-
-    else:
-        pass
-
-if __name__ == "__main__":
-    print("🚀 Bot to'g'rilangan kod bilan qayta ishga tushdi!")
-    app.run()
+                progress_args=(status, "📤 **Video yubo
